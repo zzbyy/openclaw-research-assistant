@@ -251,41 +251,14 @@ fi
 
 echo ""
 
-# ── Prompt 3: Default backend ───────────────────────────────────────────────
-
-DEFAULT_BACKEND="${WIKI_DEFAULT_BACKEND:-}"
-
-if [ -z "$DEFAULT_BACKEND" ]; then
-    echo "Default backend for wiki operations?"
-    echo ""
-    if [ "$HAS_CLAUDE" = true ]; then
-        echo "  1) cc    — Claude Code via cc-bridge (recommended for heavy lifting)"
-        echo "  2) agent — OpenClaw research agent handles directly"
-        echo ""
-        BACKEND_CHOICE=$(prompt "Enter choice" "1")
-    else
-        echo "  Claude Code is not installed — defaulting to agent backend."
-        echo "  You can switch later with: /wiki config default_backend cc"
-        echo ""
-        echo "  1) agent — OpenClaw research agent (recommended)"
-        echo "  2) cc    — Claude Code via cc-bridge (install Claude Code first)"
-        echo ""
-        BACKEND_CHOICE=$(prompt "Enter choice" "1")
-        # Remap: 1=agent, 2=cc when Claude not installed
-        case "$BACKEND_CHOICE" in
-            1) BACKEND_CHOICE="2" ;;  # maps to agent
-            2) BACKEND_CHOICE="1" ;;  # maps to cc
-        esac
-    fi
-
-    case "$BACKEND_CHOICE" in
-        1) DEFAULT_BACKEND="cc" ;;
-        2) DEFAULT_BACKEND="agent" ;;
-        *) echo "Invalid choice"; exit 1 ;;
-    esac
+# Default backend: auto-detect based on what's installed, no user prompt needed.
+# User chooses backend per-command with --backend cc|agent at runtime.
+if [ "$HAS_CLAUDE" = true ]; then
+    DEFAULT_BACKEND="cc"
+else
+    DEFAULT_BACKEND="agent"
 fi
 
-echo ""
 echo "========================================"
 echo "  Installing..."
 echo "========================================"
