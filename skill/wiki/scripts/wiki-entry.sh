@@ -111,8 +111,11 @@ case "$SUBCOMMAND" in
     batch)
         exec "$SCRIPT_DIR/batch.sh" "${REMAINING_ARGS[@]}"
         ;;
+    upgrade)
+        exec "$SCRIPT_DIR/upgrade.sh" "${REMAINING_ARGS[@]}"
+        ;;
     *)
-        jq -n --arg cmd "$SUBCOMMAND" '{"error": ("Unknown subcommand: " + $cmd + ". Use: ingest, query, lint, search, status, browse, related, config, cron, catalog, init, batch")}'
+        jq -n --arg cmd "$SUBCOMMAND" '{"error": ("Unknown subcommand: " + $cmd + ". Use: ingest, query, lint, search, status, browse, related, config, cron, catalog, init, batch, upgrade")}'
         exit 1
         ;;
 esac

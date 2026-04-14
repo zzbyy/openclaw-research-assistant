@@ -1,17 +1,17 @@
 #!/bin/bash
-# install.sh — Interactive installer for the Wiki skill
-# Prompts for: install scope (global or agent workspace), vault path, default backend
-# Then auto-setup: directories, schema, skill, config
+# install.sh — Installer for the Wiki skill
+# First install: interactive prompts for scope and vault path
+# Upgrade: auto-detects existing config, updates scripts only — no prompts
 #
-# Usage: install.sh
-# Env overrides: WIKI_VAULT_PATH, WIKI_INSTALL_SCOPE (global|workspace), WIKI_AGENT_ID, WIKI_DEFAULT_BACKEND
+# Usage: install.sh              # auto-detect: fresh install or upgrade
+#        install.sh --upgrade    # force upgrade mode (skip all prompts)
+# Env overrides: WIKI_VAULT_PATH, WIKI_INSTALL_SCOPE (global|workspace), WIKI_AGENT_ID
 
 set -e
 
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# ── Ensure interactive stdin ─────────────────────────────────────────────────
-# When run via curl | bash, stdin is the pipe. Reopen from /dev/tty so read works.
+# ── Ensure interactive stdin (for curl | bash) ──────────────────────────────
 if [[ ! -t 0 ]]; then
     if [[ -e /dev/tty ]]; then
         exec </dev/tty
@@ -22,7 +22,6 @@ if [[ ! -t 0 ]]; then
     fi
 fi
 
-# Helper: prompt with default value, always waits for input
 prompt() {
     local msg="$1"
     local default="$2"
@@ -35,6 +34,119 @@ prompt() {
         echo "$result"
     fi
 }
+
+# ── Detect upgrade vs fresh install ──────────────────────────────────────────
+
+FORCE_UPGRADE=false
+if [ "$1" = "--upgrade" ]; then
+    FORCE_UPGRADE=true
+fi
+
+# Search for existing config.json in known locations
+find_existing_install() {
+    # Check common skill locations
+    for candidate in \
+        "$HOME/.openclaw/skills/wiki/config.json" \
+        "$HOME/.agents/skills/wiki/config.json" \
+        "$HOME/.openclaw/workspace/skills/wiki/config.json"; do
+        [ -f "$candidate" ] && echo "$(dirname "$candidate")" && return 0
+    done
+
+    # Check agent workspaces from openclaw.json
+    local oc_config="$HOME/.openclaw/openclaw.json"
+    if [ -f "$oc_config" ]; then
+        while IFS= read -r ws; do
+            [ -z "$ws" ] || [ "$ws" = "null" ] && continue
+            # Tilde expansion
+            [[ "$ws" == '~/'* ]] && ws="$HOME/${ws:2}"
+            [ -f "$ws/skills/wiki/config.json" ] && echo "$ws/skills/wiki" && return 0
+        done < <(jq -r '(.agents.list // [])[] | .workspace // empty' "$oc_config" 2>/dev/null)
+
+        # Check default workspace
+        local default_ws="$HOME/.openclaw/workspace"
+        [ -f "$default_ws/skills/wiki/config.json" ] && echo "$default_ws/skills/wiki" && return 0
+    fi
+
+    return 1
+}
+
+EXISTING_INSTALL=""
+EXISTING_INSTALL=$(find_existing_install) || true
+
+if [ -n "$EXISTING_INSTALL" ] || [ "$FORCE_UPGRADE" = true ]; then
+    # ═══════════════════════════════════════════════════════════════════════
+    # UPGRADE MODE
+    # ═══════════════════════════════════════════════════════════════════════
+
+    if [ -z "$EXISTING_INSTALL" ]; then
+        echo "No existing installation found. Run without --upgrade for fresh install."
+        exit 1
+    fi
+
+    SKILL_DEST="$EXISTING_INSTALL"
+    CONFIG_FILE="$SKILL_DEST/config.json"
+
+    # Read existing config
+    _resolve_path() {
+        local p="$1"
+        [[ "$p" == '~/'* ]] && p="$HOME/${p:2}"
+        [[ "$p" == '~' ]] && p="$HOME"
+        echo "$p"
+    }
+    VAULT_PATH="$(_resolve_path "$(jq -r '.vault_path' "$CONFIG_FILE")")"
+    WIKI_DIR_NAME="$(jq -r '.wiki_dir // "wiki"' "$CONFIG_FILE")"
+    WIKI_DIR="$VAULT_PATH/$WIKI_DIR_NAME"
+
+    echo "========================================"
+    echo "  Wiki Skill — Upgrade"
+    echo "========================================"
+    echo ""
+    echo "Existing installation found:"
+    echo "  Skill:  $SKILL_DEST"
+    echo "  Vault:  $VAULT_PATH"
+    echo "  Config: $CONFIG_FILE (preserved)"
+    echo ""
+
+    # Update scripts
+    echo "Updating skill scripts..."
+    mkdir -p "$SKILL_DEST/scripts"
+    cp "$REPO_DIR/skill/wiki/SKILL.md" "$SKILL_DEST/SKILL.md"
+    cp "$REPO_DIR/skill/wiki/CLAUDE.md" "$SKILL_DEST/CLAUDE.md"
+    for script in "$REPO_DIR/skill/wiki/scripts/"*.sh; do
+        cp "$script" "$SKILL_DEST/scripts/"
+        chmod +x "$SKILL_DEST/scripts/$(basename "$script")"
+    done
+    echo "  [OK] SKILL.md"
+    echo "  [OK] CLAUDE.md"
+    echo "  [OK] scripts/ ($(ls "$SKILL_DEST/scripts/"*.sh 2>/dev/null | wc -l | tr -d ' ') files)"
+
+    # Update vault schema (CLAUDE.md only — index.md and log.md are user data)
+    echo ""
+    echo "Updating wiki schema..."
+    if [ -d "$WIKI_DIR" ]; then
+        cp "$REPO_DIR/wiki-schema/CLAUDE.md" "$WIKI_DIR/CLAUDE.md"
+        echo "  [OK] wiki/CLAUDE.md (schema updated)"
+        echo "  [--] wiki/index.md (preserved)"
+        echo "  [--] wiki/log.md (preserved)"
+    else
+        echo "  [!!] Wiki directory not found at $WIKI_DIR — skipping schema update"
+    fi
+
+    echo ""
+    echo "========================================"
+    echo "  Upgrade Complete"
+    echo "========================================"
+    echo ""
+    echo "Config preserved at: $CONFIG_FILE"
+    echo "Wiki pages, index, log, and sources are untouched."
+    echo ""
+
+    exit 0
+fi
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# FRESH INSTALL
+# ═══════════════════════════════════════════════════════════════════════════════
 
 echo "========================================"
 echo "  Wiki Skill Installer"
@@ -52,7 +164,7 @@ if command -v jq &>/dev/null; then
 else
     echo "  [!!] jq — not found (required)"
     if command -v brew &>/dev/null; then
-        INSTALL_JQ=$(prompt "  Install jq via Homebrew? [Y/n]" "Y")
+        INSTALL_JQ=$(prompt "  Install jq via Homebrew? (Y/n)" "Y")
         if [[ ! "$INSTALL_JQ" =~ ^[Nn] ]]; then
             brew install jq
             echo "  [OK] jq installed"
@@ -114,17 +226,14 @@ if [ -z "$INSTALL_SCOPE" ]; then
     echo "Where should the wiki skill be installed?"
     echo ""
 
-    # Build the options list: global + agents from openclaw.json agents.list[]
     OPTIONS_ID=()
     OPTIONS_DESC=()
     OPTIONS_WORKSPACE=()
 
-    # Option 1: Global
     OPTIONS_ID+=("__global__")
     OPTIONS_DESC+=("Global — all agents can use it (~/.agents/skills/wiki/)")
     OPTIONS_WORKSPACE+=("")
 
-    # Read agents from openclaw.json .agents.list[]
     DEFAULT_WORKSPACE="$HOME/.openclaw/workspace"
     if [ -f "$OC_CONFIG" ]; then
         AGENT_LIST_COUNT=$(jq -r '.agents.list // [] | length' "$OC_CONFIG" 2>/dev/null || echo "0")
@@ -132,7 +241,6 @@ if [ -z "$INSTALL_SCOPE" ]; then
             while IFS=$'\t' read -r agent_id agent_name agent_workspace; do
                 [ -z "$agent_id" ] && continue
                 display_name="${agent_name:-$agent_id}"
-                # If no workspace specified, use default
                 if [ -z "$agent_workspace" ] || [ "$agent_workspace" = "null" ]; then
                     agent_workspace="$DEFAULT_WORKSPACE"
                 fi
@@ -141,19 +249,16 @@ if [ -z "$INSTALL_SCOPE" ]; then
                 OPTIONS_WORKSPACE+=("$agent_workspace")
             done < <(jq -r '.agents.list[] | [.id, (.name // ""), (.workspace // "")] | @tsv' "$OC_CONFIG" 2>/dev/null)
         else
-            # No agents.list — single default agent
             OPTIONS_ID+=("main")
             OPTIONS_DESC+=("Agent: main ($DEFAULT_WORKSPACE)")
             OPTIONS_WORKSPACE+=("$DEFAULT_WORKSPACE")
         fi
     else
-        # No openclaw.json — offer default
         OPTIONS_ID+=("main")
         OPTIONS_DESC+=("Agent: main ($DEFAULT_WORKSPACE)")
         OPTIONS_WORKSPACE+=("$DEFAULT_WORKSPACE")
     fi
 
-    # Display numbered list
     for i in "${!OPTIONS_DESC[@]}"; do
         echo "  $((i + 1))) ${OPTIONS_DESC[$i]}"
     done
@@ -161,7 +266,6 @@ if [ -z "$INSTALL_SCOPE" ]; then
 
     SCOPE_CHOICE=$(prompt "Enter choice" "1")
 
-    # Validate choice
     if ! [[ "$SCOPE_CHOICE" =~ ^[0-9]+$ ]] || [ "$SCOPE_CHOICE" -lt 1 ] || [ "$SCOPE_CHOICE" -gt "${#OPTIONS_ID[@]}" ]; then
         echo "Invalid choice: $SCOPE_CHOICE"
         exit 1
@@ -193,17 +297,14 @@ else
         fi
     fi
 
-    # Resolve workspace path if not already set from the picker
     if [ -z "$AGENT_WORKSPACE" ] && [ -f "$OC_CONFIG" ]; then
         AGENT_WORKSPACE=$(jq -r --arg id "$AGENT_ID" \
             '(.agents.list // [])[] | select(.id == $id) | .workspace // ""' \
             "$OC_CONFIG" 2>/dev/null || echo "")
     fi
-    # Fallback to default workspace
     if [ -z "$AGENT_WORKSPACE" ] || [ "$AGENT_WORKSPACE" = "null" ]; then
         AGENT_WORKSPACE="$HOME/.openclaw/workspace"
     fi
-    # Safe tilde expansion
     if [[ "$AGENT_WORKSPACE" == '~/'* ]]; then
         AGENT_WORKSPACE="$HOME/${AGENT_WORKSPACE:2}"
     fi
@@ -230,7 +331,6 @@ if [ -z "$VAULT_PATH" ]; then
     exit 1
 fi
 
-# Safe tilde expansion
 if [[ "$VAULT_PATH" == '~/'* ]]; then
     VAULT_PATH="$HOME/${VAULT_PATH:2}"
 elif [[ "$VAULT_PATH" == '~' ]]; then
@@ -251,8 +351,8 @@ fi
 
 echo ""
 
-# Default backend: auto-detect based on what's installed, no user prompt needed.
-# User chooses backend per-command with --backend cc|agent at runtime.
+# Default backend: auto-detect
+HAS_CLAUDE=${HAS_CLAUDE:-false}
 if [ "$HAS_CLAUDE" = true ]; then
     DEFAULT_BACKEND="cc"
 else
@@ -317,13 +417,11 @@ echo "  [OK] scripts/ ($(ls "$SKILL_DEST/scripts/"*.sh 2>/dev/null | wc -l | tr 
 
 # ── Write config ─────────────────────────────────────────────────────────────
 
-# Config lives alongside the skill in the agent's workspace
 CONFIG_FILE="$SKILL_DEST/config.json"
 
 echo ""
 echo "Writing config to $CONFIG_FILE..."
 
-# Use raw vault path (with ~ for portability) if it starts with $HOME
 VAULT_PATH_CONFIG="$VAULT_PATH"
 if [[ "$VAULT_PATH" == "$HOME"* ]]; then
     VAULT_PATH_CONFIG="~${VAULT_PATH#$HOME}"
@@ -408,17 +506,6 @@ echo "Sources:         $SOURCES_DIR/"
 echo "Skill installed: $SKILL_DEST/"
 echo "Config:          $CONFIG_FILE"
 echo "Default backend: $DEFAULT_BACKEND"
-echo ""
-echo "Commands available:"
-echo "  /wiki ingest <path>     — Ingest a paper or article"
-echo "  /wiki query <question>  — Ask the wiki a question"
-echo "  /wiki lint              — Health check the wiki"
-echo "  /wiki search <term>     — Search wiki pages"
-echo "  /wiki status            — Wiki statistics"
-echo "  /wiki browse <page>     — Read a wiki page"
-echo "  /wiki related <page>    — Find related pages"
-echo "  /wiki config            — View/update configuration"
-echo "  /wiki cron              — Manage scheduled jobs"
 echo ""
 echo "Next steps — follow the walkthrough to get started:"
 echo "  https://github.com/zzbyy/openclaw-research-assistant/blob/main/WALKTHROUGH.md"
