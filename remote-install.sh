@@ -50,7 +50,7 @@ git clone --depth 1 --branch "$REF" \
 
 echo ""
 
-# Run installer
+# Run installer with stdin from terminal (not the pipe)
 cd "$TMPDIR/openclaw-research-assistant"
 chmod +x install.sh
-exec bash install.sh
+exec bash install.sh </dev/tty
