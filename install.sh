@@ -114,46 +114,43 @@ if [ -z "$INSTALL_SCOPE" ]; then
     echo "Where should the wiki skill be installed?"
     echo ""
 
-    # Build the options list: global + agents from openclaw.json
-    OPTIONS=()
+    # Build the options list: global + agents from openclaw.json agents.list[]
+    OPTIONS_ID=()
     OPTIONS_DESC=()
+    OPTIONS_WORKSPACE=()
 
     # Option 1: Global
-    OPTIONS+=("global")
+    OPTIONS_ID+=("__global__")
     OPTIONS_DESC+=("Global — all agents can use it (~/.agents/skills/wiki/)")
+    OPTIONS_WORKSPACE+=("")
 
-    # Read agents from openclaw.json if available
+    # Read agents from openclaw.json .agents.list[]
+    DEFAULT_WORKSPACE="$HOME/.openclaw/workspace"
     if [ -f "$OC_CONFIG" ]; then
-        # Extract agent names and workspace paths
-        AGENT_COUNT=$(jq -r '.agents // {} | length' "$OC_CONFIG" 2>/dev/null || echo "0")
-        if [ "$AGENT_COUNT" -gt 0 ]; then
-            while IFS=$'\t' read -r agent_name agent_workspace; do
-                [ -z "$agent_name" ] && continue
-                OPTIONS+=("$agent_name")
-                if [ -n "$agent_workspace" ] && [ "$agent_workspace" != "null" ]; then
-                    OPTIONS_DESC+=("Agent: $agent_name ($agent_workspace)")
-                else
-                    OPTIONS_DESC+=("Agent: $agent_name")
+        AGENT_LIST_COUNT=$(jq -r '.agents.list // [] | length' "$OC_CONFIG" 2>/dev/null || echo "0")
+        if [ "$AGENT_LIST_COUNT" -gt 0 ]; then
+            while IFS=$'\t' read -r agent_id agent_name agent_workspace; do
+                [ -z "$agent_id" ] && continue
+                display_name="${agent_name:-$agent_id}"
+                # If no workspace specified, use default
+                if [ -z "$agent_workspace" ] || [ "$agent_workspace" = "null" ]; then
+                    agent_workspace="$DEFAULT_WORKSPACE"
                 fi
-            done < <(jq -r '.agents // {} | to_entries[] | [.key, (.value.workspace // .value.workdir // "")] | @tsv' "$OC_CONFIG" 2>/dev/null)
+                OPTIONS_ID+=("$agent_id")
+                OPTIONS_DESC+=("Agent: $display_name ($agent_workspace)")
+                OPTIONS_WORKSPACE+=("$agent_workspace")
+            done < <(jq -r '.agents.list[] | [.id, (.name // ""), (.workspace // "")] | @tsv' "$OC_CONFIG" 2>/dev/null)
+        else
+            # No agents.list — single default agent
+            OPTIONS_ID+=("main")
+            OPTIONS_DESC+=("Agent: main ($DEFAULT_WORKSPACE)")
+            OPTIONS_WORKSPACE+=("$DEFAULT_WORKSPACE")
         fi
-    fi
-
-    # Also scan filesystem for workspaces not in config
-    if [ -d "$HOME/.agents/workspaces" ]; then
-        for ws_dir in "$HOME/.agents/workspaces"/*/; do
-            [ -d "$ws_dir" ] || continue
-            ws_name="$(basename "$ws_dir")"
-            # Skip if already in list
-            FOUND=false
-            for existing in "${OPTIONS[@]}"; do
-                [ "$existing" = "$ws_name" ] && FOUND=true && break
-            done
-            if [ "$FOUND" = false ]; then
-                OPTIONS+=("$ws_name")
-                OPTIONS_DESC+=("Agent: $ws_name ($ws_dir)")
-            fi
-        done
+    else
+        # No openclaw.json — offer default
+        OPTIONS_ID+=("main")
+        OPTIONS_DESC+=("Agent: main ($DEFAULT_WORKSPACE)")
+        OPTIONS_WORKSPACE+=("$DEFAULT_WORKSPACE")
     fi
 
     # Display numbered list
@@ -165,18 +162,21 @@ if [ -z "$INSTALL_SCOPE" ]; then
     SCOPE_CHOICE=$(prompt "Enter choice" "1")
 
     # Validate choice
-    if ! [[ "$SCOPE_CHOICE" =~ ^[0-9]+$ ]] || [ "$SCOPE_CHOICE" -lt 1 ] || [ "$SCOPE_CHOICE" -gt "${#OPTIONS[@]}" ]; then
+    if ! [[ "$SCOPE_CHOICE" =~ ^[0-9]+$ ]] || [ "$SCOPE_CHOICE" -lt 1 ] || [ "$SCOPE_CHOICE" -gt "${#OPTIONS_ID[@]}" ]; then
         echo "Invalid choice: $SCOPE_CHOICE"
         exit 1
     fi
 
-    SELECTED="${OPTIONS[$((SCOPE_CHOICE - 1))]}"
+    IDX=$((SCOPE_CHOICE - 1))
+    SELECTED_ID="${OPTIONS_ID[$IDX]}"
+    SELECTED_WORKSPACE="${OPTIONS_WORKSPACE[$IDX]}"
 
-    if [ "$SELECTED" = "global" ]; then
+    if [ "$SELECTED_ID" = "__global__" ]; then
         INSTALL_SCOPE="global"
     else
         INSTALL_SCOPE="workspace"
-        AGENT_ID="$SELECTED"
+        AGENT_ID="$SELECTED_ID"
+        AGENT_WORKSPACE="$SELECTED_WORKSPACE"
     fi
 fi
 
@@ -193,20 +193,22 @@ else
         fi
     fi
 
-    # Resolve workspace path: check openclaw.json first, then default
-    AGENT_WORKSPACE=""
-    if [ -f "$OC_CONFIG" ]; then
-        AGENT_WORKSPACE=$(jq -r --arg name "$AGENT_ID" '.agents[$name].workspace // .agents[$name].workdir // ""' "$OC_CONFIG" 2>/dev/null || echo "")
+    # Resolve workspace path if not already set from the picker
+    if [ -z "$AGENT_WORKSPACE" ] && [ -f "$OC_CONFIG" ]; then
+        AGENT_WORKSPACE=$(jq -r --arg id "$AGENT_ID" \
+            '(.agents.list // [])[] | select(.id == $id) | .workspace // ""' \
+            "$OC_CONFIG" 2>/dev/null || echo "")
     fi
-    if [ -n "$AGENT_WORKSPACE" ] && [ "$AGENT_WORKSPACE" != "null" ]; then
-        # Safe tilde expansion
-        if [[ "$AGENT_WORKSPACE" == '~/'* ]]; then
-            AGENT_WORKSPACE="$HOME/${AGENT_WORKSPACE:2}"
-        fi
-        SKILL_DEST="${AGENT_WORKSPACE}/skills/wiki"
-    else
-        SKILL_DEST="$HOME/.agents/workspaces/${AGENT_ID}/skills/wiki"
+    # Fallback to default workspace
+    if [ -z "$AGENT_WORKSPACE" ] || [ "$AGENT_WORKSPACE" = "null" ]; then
+        AGENT_WORKSPACE="$HOME/.openclaw/workspace"
     fi
+    # Safe tilde expansion
+    if [[ "$AGENT_WORKSPACE" == '~/'* ]]; then
+        AGENT_WORKSPACE="$HOME/${AGENT_WORKSPACE:2}"
+    fi
+
+    SKILL_DEST="${AGENT_WORKSPACE}/skills/wiki"
     echo "  -> Installing to agent '$AGENT_ID' workspace: $SKILL_DEST"
 fi
 
