@@ -18,21 +18,65 @@ echo ""
 
 # ── Prerequisites ────────────────────────────────────────────────────────────
 
-check_prereq() {
-    if command -v "$1" &>/dev/null; then
-        echo "  [OK] $1"
-        return 0
-    else
-        echo "  [!!] $1 — not found ($2)"
-        return 1
-    fi
-}
-
 echo "Checking prerequisites..."
-check_prereq jq "required — install with: brew install jq" || exit 1
-check_prereq openclaw "recommended — wiki commands via Feishu won't work without it" || true
+
+# jq — required
+if command -v jq &>/dev/null; then
+    echo "  [OK] jq"
+else
+    echo "  [!!] jq — not found (required)"
+    if command -v brew &>/dev/null; then
+        read -r -p "  Install jq via Homebrew? [Y/n]: " INSTALL_JQ
+        if [[ ! "$INSTALL_JQ" =~ ^[Nn] ]]; then
+            brew install jq
+            echo "  [OK] jq installed"
+        else
+            echo "  jq is required. Aborting."
+            exit 1
+        fi
+    else
+        echo "  Install jq manually: https://jqlang.github.io/jq/download/"
+        exit 1
+    fi
+fi
+
+# Claude Code — needed for --backend cc
 HAS_CLAUDE=true
-check_prereq claude "optional — needed for --backend cc (Claude Code dispatch)" || HAS_CLAUDE=false
+if command -v claude &>/dev/null; then
+    echo "  [OK] claude"
+else
+    HAS_CLAUDE=false
+    echo "  [!!] claude — not found (needed for --backend cc)"
+    read -r -p "  Install Claude Code now? [Y/n]: " INSTALL_CLAUDE
+    if [[ ! "$INSTALL_CLAUDE" =~ ^[Nn] ]]; then
+        echo ""
+        if command -v npm &>/dev/null; then
+            echo "  Installing via npm..."
+            npm install -g @anthropic-ai/claude-code && HAS_CLAUDE=true && echo "  [OK] claude installed" || {
+                echo "  [!!] npm install failed. Trying brew..."
+                if command -v brew &>/dev/null; then
+                    brew install claude && HAS_CLAUDE=true && echo "  [OK] claude installed" || echo "  [!!] brew install also failed. Install manually: https://docs.anthropic.com/en/docs/claude-code"
+                fi
+            }
+        elif command -v brew &>/dev/null; then
+            echo "  Installing via Homebrew..."
+            brew install claude && HAS_CLAUDE=true && echo "  [OK] claude installed" || echo "  [!!] Install failed. Install manually: https://docs.anthropic.com/en/docs/claude-code"
+        else
+            echo "  No npm or brew found. Install manually: https://docs.anthropic.com/en/docs/claude-code"
+        fi
+    else
+        echo "  Skipping — /wiki commands with --backend cc won't work without it."
+    fi
+fi
+
+# openclaw — recommended
+if command -v openclaw &>/dev/null; then
+    echo "  [OK] openclaw"
+else
+    echo "  [!!] openclaw — not found (recommended for Feishu integration)"
+    echo "       Wiki skill will still work locally via scripts."
+fi
+
 echo ""
 
 # ── Prompt 1: Install scope ─────────────────────────────────────────────────
@@ -117,11 +161,27 @@ DEFAULT_BACKEND="${WIKI_DEFAULT_BACKEND:-}"
 
 if [ -z "$DEFAULT_BACKEND" ]; then
     echo "Default backend for wiki operations?"
-    echo "  1) cc — Claude Code via cc-bridge (recommended for heavy lifting)"
-    echo "  2) agent — OpenClaw research agent handles directly"
-    echo ""
-    read -r -p "Enter choice [1]: " BACKEND_CHOICE
-    BACKEND_CHOICE="${BACKEND_CHOICE:-1}"
+    if [ "$HAS_CLAUDE" = true ]; then
+        echo "  1) cc — Claude Code via cc-bridge (recommended for heavy lifting)"
+        echo "  2) agent — OpenClaw research agent handles directly"
+        echo ""
+        read -r -p "Enter choice [1]: " BACKEND_CHOICE
+        BACKEND_CHOICE="${BACKEND_CHOICE:-1}"
+    else
+        echo "  Claude Code is not installed — defaulting to agent backend."
+        echo "  You can switch to cc later with: /wiki config default_backend cc"
+        echo ""
+        echo "  1) agent — OpenClaw research agent handles directly (recommended)"
+        echo "  2) cc — Claude Code via cc-bridge (install Claude Code first)"
+        echo ""
+        read -r -p "Enter choice [1]: " BACKEND_CHOICE
+        BACKEND_CHOICE="${BACKEND_CHOICE:-1}"
+        # Remap: 1=agent, 2=cc when Claude not installed
+        case "$BACKEND_CHOICE" in
+            1) BACKEND_CHOICE="2" ;;  # agent
+            2) BACKEND_CHOICE="1" ;;  # cc
+        esac
+    fi
 
     case "$BACKEND_CHOICE" in
         1) DEFAULT_BACKEND="cc" ;;
@@ -231,7 +291,7 @@ jq -n \
 
 echo "  [OK] config.json"
 
-# ── Check cc-bridge ──────────────────────────────────────────────────────────
+# ── Check / install cc-bridge ────────────────────────────────────────────────
 
 echo ""
 CC_DISPATCH="$HOME/.agents/skills/cc/scripts/dispatch.sh"
@@ -239,8 +299,34 @@ if [ -f "$CC_DISPATCH" ]; then
     echo "[OK] cc-bridge detected at $CC_DISPATCH"
 else
     echo "[!!] cc-bridge not found."
-    echo "     /wiki commands with --backend cc will fail."
-    echo "     Install from: https://github.com/zzbyy/openclaw-cc-bridge"
+    echo "     /wiki commands with --backend cc require cc-bridge."
+    if [ "$HAS_CLAUDE" = true ]; then
+        read -r -p "  Install cc-bridge now? [Y/n]: " INSTALL_BRIDGE
+        if [[ ! "$INSTALL_BRIDGE" =~ ^[Nn] ]]; then
+            echo "  Installing cc-bridge from GitHub..."
+            BRIDGE_TMPDIR=$(mktemp -d)
+            if git clone --depth 1 https://github.com/zzbyy/openclaw-cc-bridge.git "$BRIDGE_TMPDIR/openclaw-cc-bridge" 2>/dev/null; then
+                chmod +x "$BRIDGE_TMPDIR/openclaw-cc-bridge/install.sh"
+                bash "$BRIDGE_TMPDIR/openclaw-cc-bridge/install.sh"
+                rm -rf "$BRIDGE_TMPDIR"
+                if [ -f "$CC_DISPATCH" ]; then
+                    echo "  [OK] cc-bridge installed"
+                else
+                    echo "  [!!] cc-bridge install may have partially failed. Check ~/.agents/skills/cc/"
+                fi
+            else
+                rm -rf "$BRIDGE_TMPDIR"
+                echo "  [!!] Failed to clone cc-bridge. Install manually:"
+                echo "       curl -sSL https://raw.githubusercontent.com/zzbyy/openclaw-cc-bridge/main/remote-install.sh | bash"
+            fi
+        else
+            echo "  Skipping — install later with:"
+            echo "  curl -sSL https://raw.githubusercontent.com/zzbyy/openclaw-cc-bridge/main/remote-install.sh | bash"
+        fi
+    else
+        echo "  Claude Code is also not installed, so cc-bridge won't help yet."
+        echo "  Install both later, or use --backend agent for now."
+    fi
 fi
 
 # ── Summary ──────────────────────────────────────────────────────────────────
