@@ -1,6 +1,6 @@
 #!/bin/bash
 # install.sh — Interactive installer for the Wiki skill
-# Three prompts: install scope, vault path, default backend
+# Prompts for: install scope (global or agent workspace), vault path, default backend
 # Then auto-setup: directories, schema, skill, config
 #
 # Usage: install.sh
@@ -9,6 +9,32 @@
 set -e
 
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# ── Ensure interactive stdin ─────────────────────────────────────────────────
+# When run via curl | bash, stdin is the pipe. Reopen from /dev/tty so read works.
+if [[ ! -t 0 ]]; then
+    if [[ -e /dev/tty ]]; then
+        exec </dev/tty
+    else
+        echo "Error: No terminal available for interactive input."
+        echo "Run install.sh directly instead of piping."
+        exit 1
+    fi
+fi
+
+# Helper: prompt with default value, always waits for input
+prompt() {
+    local msg="$1"
+    local default="$2"
+    local result
+    if [ -n "$default" ]; then
+        read -r -p "$msg [$default]: " result
+        echo "${result:-$default}"
+    else
+        read -r -p "$msg: " result
+        echo "$result"
+    fi
+}
 
 echo "========================================"
 echo "  Wiki Skill Installer"
@@ -26,7 +52,7 @@ if command -v jq &>/dev/null; then
 else
     echo "  [!!] jq — not found (required)"
     if command -v brew &>/dev/null; then
-        read -r -p "  Install jq via Homebrew? [Y/n]: " INSTALL_JQ
+        INSTALL_JQ=$(prompt "  Install jq via Homebrew? [Y/n]" "Y")
         if [[ ! "$INSTALL_JQ" =~ ^[Nn] ]]; then
             brew install jq
             echo "  [OK] jq installed"
@@ -47,7 +73,7 @@ if command -v claude &>/dev/null; then
 else
     HAS_CLAUDE=false
     echo "  [!!] claude — not found (needed for --backend cc)"
-    read -r -p "  Install Claude Code now? [Y/n]: " INSTALL_CLAUDE
+    INSTALL_CLAUDE=$(prompt "  Install Claude Code now? (Y/n)" "Y")
     if [[ ! "$INSTALL_CLAUDE" =~ ^[Nn] ]]; then
         echo ""
         if command -v npm &>/dev/null; then
@@ -82,43 +108,106 @@ echo ""
 # ── Prompt 1: Install scope ─────────────────────────────────────────────────
 
 INSTALL_SCOPE="${WIKI_INSTALL_SCOPE:-}"
+OC_CONFIG="$HOME/.openclaw/openclaw.json"
 
 if [ -z "$INSTALL_SCOPE" ]; then
     echo "Where should the wiki skill be installed?"
-    echo "  1) Global — all agents can use it (~/.agents/skills/wiki/)"
-    echo "  2) Agent workspace — specific agent only"
     echo ""
-    read -r -p "Enter choice [1]: " SCOPE_CHOICE
-    SCOPE_CHOICE="${SCOPE_CHOICE:-1}"
 
-    case "$SCOPE_CHOICE" in
-        1) INSTALL_SCOPE="global" ;;
-        2) INSTALL_SCOPE="workspace" ;;
-        *) echo "Invalid choice"; exit 1 ;;
-    esac
+    # Build the options list: global + agents from openclaw.json
+    OPTIONS=()
+    OPTIONS_DESC=()
+
+    # Option 1: Global
+    OPTIONS+=("global")
+    OPTIONS_DESC+=("Global — all agents can use it (~/.agents/skills/wiki/)")
+
+    # Read agents from openclaw.json if available
+    if [ -f "$OC_CONFIG" ]; then
+        # Extract agent names and workspace paths
+        AGENT_COUNT=$(jq -r '.agents // {} | length' "$OC_CONFIG" 2>/dev/null || echo "0")
+        if [ "$AGENT_COUNT" -gt 0 ]; then
+            while IFS=$'\t' read -r agent_name agent_workspace; do
+                [ -z "$agent_name" ] && continue
+                OPTIONS+=("$agent_name")
+                if [ -n "$agent_workspace" ] && [ "$agent_workspace" != "null" ]; then
+                    OPTIONS_DESC+=("Agent: $agent_name ($agent_workspace)")
+                else
+                    OPTIONS_DESC+=("Agent: $agent_name")
+                fi
+            done < <(jq -r '.agents // {} | to_entries[] | [.key, (.value.workspace // .value.workdir // "")] | @tsv' "$OC_CONFIG" 2>/dev/null)
+        fi
+    fi
+
+    # Also scan filesystem for workspaces not in config
+    if [ -d "$HOME/.agents/workspaces" ]; then
+        for ws_dir in "$HOME/.agents/workspaces"/*/; do
+            [ -d "$ws_dir" ] || continue
+            ws_name="$(basename "$ws_dir")"
+            # Skip if already in list
+            FOUND=false
+            for existing in "${OPTIONS[@]}"; do
+                [ "$existing" = "$ws_name" ] && FOUND=true && break
+            done
+            if [ "$FOUND" = false ]; then
+                OPTIONS+=("$ws_name")
+                OPTIONS_DESC+=("Agent: $ws_name ($ws_dir)")
+            fi
+        done
+    fi
+
+    # Display numbered list
+    for i in "${!OPTIONS_DESC[@]}"; do
+        echo "  $((i + 1))) ${OPTIONS_DESC[$i]}"
+    done
+    echo ""
+
+    SCOPE_CHOICE=$(prompt "Enter choice" "1")
+
+    # Validate choice
+    if ! [[ "$SCOPE_CHOICE" =~ ^[0-9]+$ ]] || [ "$SCOPE_CHOICE" -lt 1 ] || [ "$SCOPE_CHOICE" -gt "${#OPTIONS[@]}" ]; then
+        echo "Invalid choice: $SCOPE_CHOICE"
+        exit 1
+    fi
+
+    SELECTED="${OPTIONS[$((SCOPE_CHOICE - 1))]}"
+
+    if [ "$SELECTED" = "global" ]; then
+        INSTALL_SCOPE="global"
+    else
+        INSTALL_SCOPE="workspace"
+        AGENT_ID="$SELECTED"
+    fi
 fi
 
 if [ "$INSTALL_SCOPE" = "global" ]; then
     SKILL_DEST="$HOME/.agents/skills/wiki"
+    echo "  -> Installing globally to $SKILL_DEST"
 else
-    AGENT_ID="${WIKI_AGENT_ID:-}"
+    AGENT_ID="${AGENT_ID:-${WIKI_AGENT_ID:-}}"
     if [ -z "$AGENT_ID" ]; then
-        echo ""
-        # List available workspaces if possible
-        if [ -d "$HOME/.agents/workspaces" ]; then
-            echo "Available agent workspaces:"
-            for ws in "$HOME/.agents/workspaces"/*/; do
-                [ -d "$ws" ] && echo "  - $(basename "$ws")"
-            done
-            echo ""
-        fi
-        read -r -p "Enter agent ID: " AGENT_ID
+        AGENT_ID=$(prompt "Enter agent ID" "")
         if [ -z "$AGENT_ID" ]; then
             echo "Agent ID required for workspace install."
             exit 1
         fi
     fi
-    SKILL_DEST="$HOME/.agents/workspaces/${AGENT_ID}/skills/wiki"
+
+    # Resolve workspace path: check openclaw.json first, then default
+    AGENT_WORKSPACE=""
+    if [ -f "$OC_CONFIG" ]; then
+        AGENT_WORKSPACE=$(jq -r --arg name "$AGENT_ID" '.agents[$name].workspace // .agents[$name].workdir // ""' "$OC_CONFIG" 2>/dev/null || echo "")
+    fi
+    if [ -n "$AGENT_WORKSPACE" ] && [ "$AGENT_WORKSPACE" != "null" ]; then
+        # Safe tilde expansion
+        if [[ "$AGENT_WORKSPACE" == '~/'* ]]; then
+            AGENT_WORKSPACE="$HOME/${AGENT_WORKSPACE:2}"
+        fi
+        SKILL_DEST="${AGENT_WORKSPACE}/skills/wiki"
+    else
+        SKILL_DEST="$HOME/.agents/workspaces/${AGENT_ID}/skills/wiki"
+    fi
+    echo "  -> Installing to agent '$AGENT_ID' workspace: $SKILL_DEST"
 fi
 
 echo ""
@@ -128,7 +217,10 @@ echo ""
 VAULT_PATH="${WIKI_VAULT_PATH:-}"
 
 if [ -z "$VAULT_PATH" ]; then
-    read -r -p "Enter your Obsidian vault path: " VAULT_PATH
+    echo "Enter the path to your Obsidian vault."
+    echo "(This is where wiki pages and sources will live.)"
+    echo ""
+    VAULT_PATH=$(prompt "Obsidian vault path" "")
 fi
 
 if [ -z "$VAULT_PATH" ]; then
@@ -144,10 +236,12 @@ elif [[ "$VAULT_PATH" == '~' ]]; then
 fi
 
 if [ ! -d "$VAULT_PATH" ]; then
+    echo ""
     echo "Vault directory does not exist: $VAULT_PATH"
-    read -r -p "Create it? [y/N]: " CREATE_VAULT
+    CREATE_VAULT=$(prompt "Create it? (y/N)" "N")
     if [[ "$CREATE_VAULT" =~ ^[Yy] ]]; then
         mkdir -p "$VAULT_PATH"
+        echo "  [OK] Created $VAULT_PATH"
     else
         exit 1
     fi
@@ -161,25 +255,24 @@ DEFAULT_BACKEND="${WIKI_DEFAULT_BACKEND:-}"
 
 if [ -z "$DEFAULT_BACKEND" ]; then
     echo "Default backend for wiki operations?"
+    echo ""
     if [ "$HAS_CLAUDE" = true ]; then
-        echo "  1) cc — Claude Code via cc-bridge (recommended for heavy lifting)"
+        echo "  1) cc    — Claude Code via cc-bridge (recommended for heavy lifting)"
         echo "  2) agent — OpenClaw research agent handles directly"
         echo ""
-        read -r -p "Enter choice [1]: " BACKEND_CHOICE
-        BACKEND_CHOICE="${BACKEND_CHOICE:-1}"
+        BACKEND_CHOICE=$(prompt "Enter choice" "1")
     else
         echo "  Claude Code is not installed — defaulting to agent backend."
-        echo "  You can switch to cc later with: /wiki config default_backend cc"
+        echo "  You can switch later with: /wiki config default_backend cc"
         echo ""
-        echo "  1) agent — OpenClaw research agent handles directly (recommended)"
-        echo "  2) cc — Claude Code via cc-bridge (install Claude Code first)"
+        echo "  1) agent — OpenClaw research agent (recommended)"
+        echo "  2) cc    — Claude Code via cc-bridge (install Claude Code first)"
         echo ""
-        read -r -p "Enter choice [1]: " BACKEND_CHOICE
-        BACKEND_CHOICE="${BACKEND_CHOICE:-1}"
+        BACKEND_CHOICE=$(prompt "Enter choice" "1")
         # Remap: 1=agent, 2=cc when Claude not installed
         case "$BACKEND_CHOICE" in
-            1) BACKEND_CHOICE="2" ;;  # agent
-            2) BACKEND_CHOICE="1" ;;  # cc
+            1) BACKEND_CHOICE="2" ;;  # maps to agent
+            2) BACKEND_CHOICE="1" ;;  # maps to cc
         esac
     fi
 
@@ -301,7 +394,7 @@ else
     echo "[!!] cc-bridge not found."
     echo "     /wiki commands with --backend cc require cc-bridge."
     if [ "$HAS_CLAUDE" = true ]; then
-        read -r -p "  Install cc-bridge now? [Y/n]: " INSTALL_BRIDGE
+        INSTALL_BRIDGE=$(prompt "  Install cc-bridge now? (Y/n)" "Y")
         if [[ ! "$INSTALL_BRIDGE" =~ ^[Nn] ]]; then
             echo "  Installing cc-bridge from GitHub..."
             BRIDGE_TMPDIR=$(mktemp -d)
