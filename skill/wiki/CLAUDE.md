@@ -12,7 +12,7 @@ You serve as the conversational interface to the wiki. You handle two modes:
 
 ## Wiki Location
 
-The wiki is at the path configured in `~/.openclaw/wiki/config.json`:
+The wiki is at the path configured in `config.json` (located alongside this file in the skill directory):
 - `vault_path` + `wiki_dir` = wiki directory (contains `CLAUDE.md` schema, `index.md`, `log.md`, `pages/`)
 - `vault_path` + `sources_dir` = raw source documents (immutable)
 

@@ -151,8 +151,8 @@ Config lives at `~/.openclaw/wiki/config.json`:
 
 | What | Where |
 |------|-------|
-| Skill | `~/.agents/skills/wiki/` or `~/.agents/workspaces/<id>/skills/wiki/` |
-| Config | `~/.openclaw/wiki/config.json` |
+| Skill | `~/.agents/skills/wiki/` or `<agent-workspace>/skills/wiki/` |
+| Config | `<skill-dir>/config.json` (lives alongside the skill) |
 | Wiki pages | `<vault>/wiki/pages/` |
 | Schema | `<vault>/wiki/CLAUDE.md` |
 | Sources | `<vault>/sources/` |

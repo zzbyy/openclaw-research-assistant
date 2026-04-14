@@ -317,12 +317,11 @@ echo "  [OK] scripts/ ($(ls "$SKILL_DEST/scripts/"*.sh 2>/dev/null | wc -l | tr 
 
 # ── Write config ─────────────────────────────────────────────────────────────
 
-CONFIG_DIR="$HOME/.openclaw/wiki"
-CONFIG_FILE="$CONFIG_DIR/config.json"
+# Config lives alongside the skill in the agent's workspace
+CONFIG_FILE="$SKILL_DEST/config.json"
 
 echo ""
 echo "Writing config to $CONFIG_FILE..."
-mkdir -p "$CONFIG_DIR"
 
 # Use raw vault path (with ~ for portability) if it starts with $HOME
 VAULT_PATH_CONFIG="$VAULT_PATH"

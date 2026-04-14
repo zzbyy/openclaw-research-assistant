@@ -11,7 +11,8 @@
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-CONFIG_FILE="$HOME/.openclaw/wiki/config.json"
+SKILL_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+CONFIG_FILE="$SKILL_DIR/config.json"
 
 # ── Read config ──────────────────────────────────────────────────────────────
 
