@@ -1,0 +1,31 @@
+{
+  "vault_path": "~/obsidian-vault",
+  "wiki_dir": "wiki",
+  "sources_dir": "sources",
+  "default_backend": "cc",
+  "cc_bridge": {
+    "dispatch_path": "~/.agents/skills/cc/scripts/dispatch.sh",
+    "model": "",
+    "timeout_minutes": 30
+  },
+  "notifications": {
+    "ingest_complete": true,
+    "query_result": true,
+    "lint_report": true
+  },
+  "cron": {
+    "lint": {
+      "enabled": false,
+      "schedule": "sunday 9am",
+      "backend": "cc"
+    },
+    "ingest": {
+      "enabled": false,
+      "schedule": "daily 6am",
+      "backend": "cc"
+    }
+  },
+  "confidence": {
+    "stale_after_days": 90
+  }
+}
