@@ -102,8 +102,17 @@ case "$SUBCOMMAND" in
     cron)
         exec "$SCRIPT_DIR/cron.sh" "${REMAINING_ARGS[@]}"
         ;;
+    catalog)
+        exec "$SCRIPT_DIR/catalog.sh" "${REMAINING_ARGS[@]}"
+        ;;
+    init)
+        exec "$SCRIPT_DIR/init.sh" "${REMAINING_ARGS[@]}"
+        ;;
+    batch)
+        exec "$SCRIPT_DIR/batch.sh" "${REMAINING_ARGS[@]}"
+        ;;
     *)
-        jq -n --arg cmd "$SUBCOMMAND" '{"error": ("Unknown subcommand: " + $cmd + ". Use: ingest, query, lint, search, status, browse, related, config, cron")}'
+        jq -n --arg cmd "$SUBCOMMAND" '{"error": ("Unknown subcommand: " + $cmd + ". Use: ingest, query, lint, search, status, browse, related, config, cron, catalog, init, batch")}'
         exit 1
         ;;
 esac

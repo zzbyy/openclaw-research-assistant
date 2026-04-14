@@ -40,9 +40,47 @@ You should get back a JSON summary showing 0 pages, 0 sources — an empty wiki 
 
 ---
 
-## 3. Ingest Your First Paper
+## 3. First-Time Initialization (Thousands of Papers)
 
-Drop a PDF into the wiki:
+If you have a large collection of papers, don't ingest them all at once. Use the initialization workflow:
+
+### Step 1: Catalog your sources
+```
+/wiki catalog
+```
+Scans everything in `sources/` and creates `wiki/catalog.md` — a table of all documents with title, format, size, and ingestion status. No LLM calls, runs instantly.
+
+### Step 2: Initialize the wiki
+```
+/wiki init
+```
+Guided initialization:
+1. Runs catalog automatically
+2. Picks the top 15 largest PDFs as foundational papers (larger = usually more comprehensive)
+3. Dispatches them for ingestion
+
+Or specify how many:
+```
+/wiki init --auto 20     # pick top 20
+```
+
+### Step 3: Continue with batches
+After the initial seed, ingest more in controlled batches:
+```
+/wiki batch --limit 10                      # next 10 pending files
+/wiki batch --limit 5 --format pdfs         # only PDFs
+/wiki batch --match "transformer" --limit 5 # filename pattern
+/wiki batch --dry-run                       # preview without ingesting
+```
+
+### Step 4: Let queries guide priorities
+Use `/wiki query` to ask questions. When the wiki can't answer, that tells you what to ingest next.
+
+---
+
+## 4. Ingest a Single Paper
+
+Drop a specific PDF into the wiki:
 
 ```
 /wiki ingest ~/papers/attention-is-all-you-need.pdf
@@ -89,7 +127,7 @@ Add `--backend cc` or `--backend agent` to any command:
 
 ---
 
-## 4. Query the Wiki
+## 5. Query the Wiki
 
 Ask questions about what you've ingested:
 
@@ -112,7 +150,7 @@ The agent reads the relevant wiki pages and synthesizes an answer. No command ne
 
 ---
 
-## 5. Search & Browse
+## 6. Search & Browse
 
 Find pages by keyword:
 ```
@@ -137,7 +175,7 @@ Shows all typed relationships: what it depends on, what uses it, what it superse
 
 ---
 
-## 6. Lint — Keep the Wiki Healthy
+## 7. Lint — Keep the Wiki Healthy
 
 Run a health check:
 ```
@@ -163,7 +201,7 @@ When you ingest a new paper that contradicts existing knowledge, the wiki doesn'
 
 ---
 
-## 7. Obsidian Integration
+## 8. Obsidian Integration
 
 Your wiki is native Obsidian markdown. Everything works out of the box:
 
@@ -197,7 +235,7 @@ WHERE status = "stale"
 
 ---
 
-## 8. Scheduled Automation (Optional)
+## 9. Scheduled Automation (Optional)
 
 Set up periodic jobs via OpenClaw cron:
 
@@ -223,7 +261,7 @@ Results are sent to your Feishu channel as notifications.
 
 ---
 
-## 9. Configuration
+## 10. Configuration
 
 View or update settings:
 ```
@@ -237,7 +275,7 @@ Config lives alongside the skill in the agent's workspace (`config.json`).
 
 ---
 
-## 10. Building Your Wiki — Tips
+## 11. Building Your Wiki — Tips
 
 ### Start with a handful of foundational papers
 Don't ingest everything at once. Start with 5-10 core papers in your area. Let the wiki build a strong foundation of cross-referenced concepts, then add more incrementally.
@@ -263,7 +301,7 @@ Don't resolve every contradiction immediately. Let them build up, then review th
 
 ---
 
-## 11. Troubleshooting
+## 12. Troubleshooting
 
 **No response from `/wiki` commands?**
 ```bash
@@ -288,7 +326,7 @@ Make sure your Obsidian vault path matches the `vault_path` in config. The wiki 
 
 ---
 
-## 12. Updating
+## 13. Updating
 
 Re-run the installer — it's idempotent:
 ```bash

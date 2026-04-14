@@ -63,8 +63,22 @@ Also works conversationally — just ask the research agent a question in Feishu
 | `/wiki related <page>` | Find related pages via typed relationships |
 | `/wiki config [key] [value]` | View or update configuration |
 | `/wiki cron <lint\|ingest> [opts]` | Manage scheduled jobs |
+| `/wiki catalog` | Scan sources and build a lightweight catalog (no LLM calls) |
+| `/wiki init [--auto N]` | Guided first-time initialization — catalog, pick top papers, ingest |
+| `/wiki batch [--limit N] [opts]` | Batch ingest pending sources with filters |
 
 All commands accept `--backend cc|agent` to override the default.
+
+### First-Time Initialization
+
+```
+/wiki catalog                               # scan all sources, build catalog.md
+/wiki init                                  # pick top 15 papers, start ingesting
+/wiki init --auto 20                        # pick top 20 instead
+/wiki batch --limit 10                      # ingest next 10 pending files
+/wiki batch --match "transformer" --limit 5 # filter by filename pattern
+/wiki batch --dry-run                       # preview without ingesting
+```
 
 ### Cron Automation
 

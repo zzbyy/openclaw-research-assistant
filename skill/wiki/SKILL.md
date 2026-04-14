@@ -27,6 +27,9 @@ Personal knowledge wiki following Karpathy's LLM Wiki method with v2 extensions
 | `/wiki related <page>` | `scripts/wiki-entry.sh related` | Find related pages via typed relationships |
 | `/wiki config <key> [value]` | `scripts/wiki-entry.sh config` | View or update wiki configuration |
 | `/wiki cron <lint\|ingest> [opts]` | `scripts/wiki-entry.sh cron` | Manage scheduled lint and auto-ingest jobs |
+| `/wiki catalog [--format <type>]` | `scripts/wiki-entry.sh catalog` | Scan sources and build a lightweight catalog |
+| `/wiki init [--auto <count>]` | `scripts/wiki-entry.sh init` | Guided first-time wiki initialization |
+| `/wiki batch [--limit N] [opts]` | `scripts/wiki-entry.sh batch` | Batch ingest pending sources |
 
 ## Global Flags
 
