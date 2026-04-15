@@ -1,25 +1,28 @@
 #!/bin/bash
-# batch.sh — Batch ingest multiple source files
-# Skips already-ingested files. Supports limits, format filters, filename patterns.
+# batch.sh — Two-phase batch pipeline: extract sources → absorb into wiki
 #
-# Usage: batch.sh [--limit N] [--format pdf|html|epub|markdown] [--match <pattern>] [--dry-run] [--topic <id>]
+# Step 1: Python extracts text from all pending sources → .entries/
+# Step 2: Absorb unprocessed entries into wiki pages (via Claude Code or agent)
+#
+# Usage: batch.sh [--limit N] [--auto] [--match <pattern>] [--dry-run] [--topic <id>]
 # Env: WIKI_BACKEND, WIKI_PATH, WIKI_SOURCES_PATH, WIKI_CONFIG_FILE
 
 set -e
 
-# Bootstrap: resolve config if not called via wiki-entry.sh
+# Bootstrap
 source "$(dirname "${BASH_SOURCE[0]}")/_bootstrap.sh"
 source "$(dirname "${BASH_SOURCE[0]}")/_notify.sh"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SKILL_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 # ── Parse args ───────────────────────────────────────────────────────────────
 
 DEFAULT_LIMIT=$([ -f "$WIKI_CONFIG_FILE" ] && jq -r '.batch.default_limit // 10' "$WIKI_CONFIG_FILE" 2>/dev/null || echo "10")
 LIMIT="$DEFAULT_LIMIT"
-FORMAT_FILTER=""
 MATCH_PATTERN=""
 DRY_RUN=false
+AUTO=false
 TOPIC=""
 
 while [[ $# -gt 0 ]]; do
@@ -28,16 +31,16 @@ while [[ $# -gt 0 ]]; do
             LIMIT="$2"
             shift 2
             ;;
-        --format)
-            FORMAT_FILTER="$2"
-            shift 2
-            ;;
         --match|-m)
             MATCH_PATTERN="$2"
             shift 2
             ;;
         --dry-run)
             DRY_RUN=true
+            shift
+            ;;
+        --auto)
+            AUTO=true
             shift
             ;;
         --topic)
@@ -54,184 +57,293 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-# ── Load ingestion state ────────────────────────────────────────────────────
+# ── Paths ────────────────────────────────────────────────────────────────────
 
-INGESTED_FILE="$WIKI_PATH/.ingested"
-LOG_FILE="$WIKI_PATH/log.md"
+ENTRIES_DIR="$WIKI_PATH/.entries"
+ABSORBED_FILE="$ENTRIES_DIR/.absorbed"
+INGEST_PY="$WIKI_PATH/ingest.py"
 
-# Build combined ingested list in a temp file (compatible with Bash 3)
-INGESTED_TMP=$(mktemp)
-trap 'rm -f "$INGESTED_TMP"' EXIT
-
-if [ -f "$INGESTED_FILE" ]; then
-    cat "$INGESTED_FILE" >> "$INGESTED_TMP"
+# Find ingest.py
+if [ ! -f "$INGEST_PY" ]; then
+    INGEST_PY="$SKILL_DIR/ingest.py"
 fi
 
-if [ -f "$LOG_FILE" ]; then
-    while IFS='|' read -r _ _ op details _ _; do
-        op=$(echo "$op" | xargs 2>/dev/null || true)
-        [ "$op" = "ingest" ] || continue
-        details=$(echo "$details" | xargs 2>/dev/null || true)
-        [ -n "$details" ] && echo "$details" >> "$INGESTED_TMP"
-    done < "$LOG_FILE"
+mkdir -p "$ENTRIES_DIR"
+touch "$ABSORBED_FILE"
+
+# ── Step 1: Extract — Python processes all pending sources ───────────────────
+
+HAS_PYTHON=false
+if [ -f "$INGEST_PY" ] && command -v python3 &>/dev/null; then
+    HAS_PYTHON=true
 fi
 
-is_ingested() {
-    grep -qxF "$1" "$INGESTED_TMP" 2>/dev/null
-}
+if [ "$HAS_PYTHON" = true ]; then
+    echo "Step 1: Extracting text from pending sources..." >&2
+    wiki_notify "[Wiki] Step 1: Extracting text from sources..."
 
-# ── Find pending files ──────────────────────────────────────────────────────
+    EXTRACT_OUT=$(WIKI_VAULT_PATH="$WIKI_VAULT_PATH" python3 "$INGEST_PY" 2>&1) || true
 
-PENDING=()
+    # Parse extraction summary
+    EXTRACTED=$(echo "$EXTRACT_OUT" | grep -oE 'Success: [0-9]+' | grep -oE '[0-9]+' || echo "0")
+    EXTRACT_FAILED=$(echo "$EXTRACT_OUT" | grep -oE 'Failed: +[0-9]+' | grep -oE '[0-9]+' || echo "0")
+    EXTRACT_SKIPPED=$(echo "$EXTRACT_OUT" | grep -oE 'Skipped: [0-9]+' | grep -oE '[0-9]+' || echo "0")
 
-for subdir in "$WIKI_SOURCES_PATH"/*/; do
-    [ -d "$subdir" ] || continue
-    FORMAT="$(basename "$subdir")"
+    echo "  Extracted: $EXTRACTED new, $EXTRACT_SKIPPED already done, $EXTRACT_FAILED failed" >&2
+    [ "$EXTRACTED" -gt 0 ] && wiki_notify "[Wiki] Extracted $EXTRACTED new entries ($EXTRACT_FAILED failed)"
+else
+    echo "Step 1: Skipping extraction (no ingest.py or python3)" >&2
+    EXTRACTED=0
+    EXTRACT_FAILED=0
+fi
 
-    # Apply format filter
-    if [ -n "$FORMAT_FILTER" ] && [ "$FORMAT" != "$FORMAT_FILTER" ]; then
-        continue
-    fi
+# ── Step 2: Find unabsorbed entries ──────────────────────────────────────────
 
-    for file in "$subdir"/*; do
-        [ -f "$file" ] || continue
-        FILENAME="$(basename "$file")"
+find_pending_entries() {
+    local pending=()
+    for entry in "$ENTRIES_DIR"/*.md; do
+        [ -f "$entry" ] || continue
+        ENTRY_NAME="$(basename "$entry")"
 
-        # Skip already ingested
-        is_ingested "$FILENAME" && continue
+        # Skip if already absorbed
+        grep -qxF "$ENTRY_NAME" "$ABSORBED_FILE" 2>/dev/null && continue
 
-        # Apply match pattern (case-insensitive grep on filename)
+        # Apply match pattern
         if [ -n "$MATCH_PATTERN" ]; then
-            echo "$FILENAME" | grep -qi "$MATCH_PATTERN" 2>/dev/null || continue
+            echo "$ENTRY_NAME" | grep -qi "$MATCH_PATTERN" 2>/dev/null || continue
         fi
 
-        PENDING+=("$file")
+        pending+=("$entry")
     done
-done
+    echo "${pending[@]}"
+}
 
+PENDING_STR=$(find_pending_entries)
+read -ra PENDING <<< "$PENDING_STR"
 TOTAL_PENDING=${#PENDING[@]}
 
 if [ "$TOTAL_PENDING" -eq 0 ]; then
-    jq -n '{
+    echo "Step 2: No pending entries to absorb." >&2
+    jq -n --argjson extracted "${EXTRACTED:-0}" '{
         action: "batch",
-        status: "nothing_to_do",
-        message: "No pending files match the criteria. All sources may already be ingested."
+        status: "nothing_to_absorb",
+        extracted: $extracted,
+        message: ("Extraction done (" + ($extracted | tostring) + " new). No pending entries to absorb.")
     }'
     exit 0
 fi
 
-# Apply limit
-BATCH_SIZE="$LIMIT"
-if [ "$BATCH_SIZE" -gt "$TOTAL_PENDING" ]; then
-    BATCH_SIZE="$TOTAL_PENDING"
-fi
+echo "Step 2: $TOTAL_PENDING entries pending absorption." >&2
 
 # ── Dry run ──────────────────────────────────────────────────────────────────
 
 if [ "$DRY_RUN" = true ]; then
+    BATCH_SIZE="$LIMIT"
+    [ "$BATCH_SIZE" -gt "$TOTAL_PENDING" ] && BATCH_SIZE="$TOTAL_PENDING"
+
     FILENAMES="[]"
     for ((i=0; i<BATCH_SIZE; i++)); do
-        file="${PENDING[$i]}"
-        FILENAMES=$(echo "$FILENAMES" | jq --arg f "$(basename "$file")" '. + [$f]')
+        FILENAMES=$(echo "$FILENAMES" | jq --arg f "$(basename "${PENDING[$i]}")" '. + [$f]')
     done
 
     jq -n \
-        --arg action "batch_dry_run" \
+        --argjson extracted "${EXTRACTED:-0}" \
         --argjson total_pending "$TOTAL_PENDING" \
         --argjson batch_size "$BATCH_SIZE" \
         --argjson files "$FILENAMES" \
         '{
-            action: $action,
+            action: "batch_dry_run",
+            extracted: $extracted,
             total_pending: $total_pending,
             batch_size: $batch_size,
             files: $files,
-            message: ("Dry run: would ingest " + ($batch_size | tostring) + " of " + ($total_pending | tostring) + " pending files.")
+            message: ("Dry run: " + ($extracted | tostring) + " extracted, would absorb " + ($batch_size | tostring) + " of " + ($total_pending | tostring) + " pending entries.")
         }'
     exit 0
 fi
 
-# ── Dispatch batch ───────────────────────────────────────────────────────────
+# ── Step 3: Absorb entries ───────────────────────────────────────────────────
 
-wiki_notify "[Wiki Batch] Starting: $BATCH_SIZE files to process..."
+_wiki_config() {
+    [ -f "$WIKI_CONFIG_FILE" ] && jq -r "$1 // empty" "$WIKI_CONFIG_FILE" 2>/dev/null || echo ""
+}
 
-DISPATCHED=0
-FAILED=0
-
-for ((i=0; i<BATCH_SIZE; i++)); do
-    file="${PENDING[$i]}"
-    FILENAME="$(basename "$file")"
-
-    echo "[$((i+1))/$BATCH_SIZE] Ingesting: $FILENAME" >&2
-
-    # Build ingest args
-    INGEST_ARGS=("$file")
-    [ -n "$TOPIC" ] && INGEST_ARGS+=(--topic "$TOPIC")
-
-    # Dispatch via ingest.sh (capture output for progress)
-    INGEST_OUT=$("$SCRIPT_DIR/ingest.sh" "${INGEST_ARGS[@]}" 2>&1) && {
-        echo "$FILENAME" >> "$INGESTED_FILE"
-        DISPATCHED=$((DISPATCHED + 1))
-        # Extract task_id if cc-bridge dispatch
-        TASK_ID=$(echo "$INGEST_OUT" | jq -r '.task_id // empty' 2>/dev/null || true)
-        if [ -n "$TASK_ID" ]; then
-            echo "  -> dispatched (task: $TASK_ID)" >&2
-        else
-            echo "  -> done" >&2
-        fi
-    } || {
-        echo "  [!!] Failed: $FILENAME" >&2
-        FAILED=$((FAILED + 1))
-    }
-
-    # Send progress notification at intervals
-    if should_notify_progress "$((i+1))"; then
-        wiki_notify "[Wiki Batch] $((i+1))/$BATCH_SIZE dispatched ($FAILED failed)..."
-    fi
-done
-
-REMAINING=$((TOTAL_PENDING - BATCH_SIZE))
-
-# ── Auto-reindex (incremental) ──────────────────────────────────────────────
-
-REINDEXED=false
-if command -v qmd &>/dev/null && [ "$DISPATCHED" -gt 0 ]; then
-    echo "Reindexing search index..." >&2
-    REINDEX_OUT=$("$SCRIPT_DIR/reindex.sh" 2>&1) && REINDEXED=true || true
-    REINDEX_MSG=$(echo "$REINDEX_OUT" | jq -r '.message // empty' 2>/dev/null || true)
-    [ -n "$REINDEX_MSG" ] && echo "  $REINDEX_MSG" >&2
+DISPATCH_PATH=""
+if [ "$WIKI_BACKEND" = "cc" ]; then
+    DISPATCH_PATH="$(_wiki_config '.cc_bridge.dispatch_path')"
+    [[ "$DISPATCH_PATH" == '~/'* ]] && DISPATCH_PATH="$HOME/${DISPATCH_PATH:2}"
 fi
 
-# ── Completion notification ─────────────────────────────────────────────────
+CC_MODEL="$(_wiki_config '.cc_bridge.model')"
+CC_TIMEOUT="$(_wiki_config '.cc_bridge.timeout_minutes')"
 
-SUMMARY="[Wiki Batch] Complete: $DISPATCHED dispatched, $FAILED failed, $REMAINING remaining."
-[ "$REINDEXED" = true ] && SUMMARY="$SUMMARY Search index updated."
-[ "$WIKI_BACKEND" = "cc" ] && SUMMARY="$SUMMARY Pages creating in background."
+absorb_batch() {
+    local batch_start="$1"
+    local batch_size="$2"
+    local batch_num="$3"
+    local dispatched=0
+    local failed=0
+
+    wiki_notify "[Wiki] Absorbing batch $batch_num ($batch_size entries)..."
+
+    for ((i=batch_start; i<batch_start+batch_size && i<TOTAL_PENDING; i++)); do
+        entry="${PENDING[$i]}"
+        ENTRY_NAME="$(basename "$entry")"
+        ENTRY_IDX=$((i - batch_start + 1))
+
+        echo "  [$ENTRY_IDX/$batch_size] Absorbing: $ENTRY_NAME" >&2
+
+        if [ "$WIKI_BACKEND" = "cc" ] && [ -f "$DISPATCH_PATH" ]; then
+            # CC backend: dispatch to Claude Code
+            PROMPT="Absorb this pre-extracted entry into the wiki. Follow the wiki schema in .schema.md.
+If Obsidian skills are available, use them for creating and editing markdown files.
+
+Entry file: .entries/${ENTRY_NAME}
+
+Instructions:
+1. Read the entry from .entries/${ENTRY_NAME}
+2. Scan index.md to understand current wiki state
+3. Identify key concepts, methods, people, techniques
+4. Create pages in appropriate type subdirectories (create dirs as needed)
+5. Create a book/paper summary page for the source itself
+6. Cross-reference with existing pages
+7. Check for contradictions — add > [!warning] callouts if found
+8. Update index.md with new entries
+9. Append to log.md"
+
+            DISPATCH_ARGS=(--dir "$WIKI_PATH")
+            [ -n "$CC_MODEL" ] && DISPATCH_ARGS+=(--model "$CC_MODEL")
+            [ -n "$CC_TIMEOUT" ] && DISPATCH_ARGS+=(--timeout "$CC_TIMEOUT")
+            [ -n "$TOPIC" ] && DISPATCH_ARGS+=(--topic "$TOPIC")
+
+            if "$DISPATCH_PATH" "${DISPATCH_ARGS[@]}" -- "$PROMPT" >/dev/null 2>&1; then
+                echo "$ENTRY_NAME" >> "$ABSORBED_FILE"
+                dispatched=$((dispatched + 1))
+                TASK_ID=$("$DISPATCH_PATH" "${DISPATCH_ARGS[@]}" -- "$PROMPT" 2>/dev/null | jq -r '.task_id // empty' 2>/dev/null || true)
+                echo "    -> dispatched" >&2
+            else
+                echo "    [!!] Failed" >&2
+                failed=$((failed + 1))
+            fi
+        else
+            # Agent backend: return entry info for the agent to process
+            echo "$ENTRY_NAME" >> "$ABSORBED_FILE"
+            dispatched=$((dispatched + 1))
+            echo "    -> queued for agent" >&2
+        fi
+
+        # Progress notification
+        if should_notify_progress "$ENTRY_IDX"; then
+            wiki_notify "[Wiki] Batch $batch_num: $ENTRY_IDX/$batch_size absorbed..."
+        fi
+    done
+
+    echo "$dispatched $failed"
+}
+
+# ── Run absorption (single batch or auto-loop) ──────────────────────────────
+
+TOTAL_DISPATCHED=0
+TOTAL_FAILED=0
+BATCH_NUM=0
+
+if [ "$AUTO" = true ]; then
+    echo "Auto mode: processing all $TOTAL_PENDING pending entries in batches of $LIMIT..." >&2
+    wiki_notify "[Wiki] Auto batch: $TOTAL_PENDING entries to process (batches of $LIMIT)"
+
+    OFFSET=0
+    while [ "$OFFSET" -lt "$TOTAL_PENDING" ]; do
+        BATCH_NUM=$((BATCH_NUM + 1))
+        CURRENT_BATCH="$LIMIT"
+        REMAINING=$((TOTAL_PENDING - OFFSET))
+        [ "$CURRENT_BATCH" -gt "$REMAINING" ] && CURRENT_BATCH="$REMAINING"
+
+        RESULT=$(absorb_batch "$OFFSET" "$CURRENT_BATCH" "$BATCH_NUM")
+        D=$(echo "$RESULT" | awk '{print $1}')
+        F=$(echo "$RESULT" | awk '{print $2}')
+        TOTAL_DISPATCHED=$((TOTAL_DISPATCHED + D))
+        TOTAL_FAILED=$((TOTAL_FAILED + F))
+
+        OFFSET=$((OFFSET + CURRENT_BATCH))
+
+        # Reindex after each batch
+        if command -v qmd &>/dev/null && [ "$D" -gt 0 ]; then
+            echo "  Reindexing..." >&2
+            "$SCRIPT_DIR/reindex.sh" >/dev/null 2>&1 || true
+        fi
+    done
+else
+    BATCH_NUM=1
+    BATCH_SIZE="$LIMIT"
+    [ "$BATCH_SIZE" -gt "$TOTAL_PENDING" ] && BATCH_SIZE="$TOTAL_PENDING"
+
+    RESULT=$(absorb_batch 0 "$BATCH_SIZE" 1)
+    TOTAL_DISPATCHED=$(echo "$RESULT" | awk '{print $1}')
+    TOTAL_FAILED=$(echo "$RESULT" | awk '{print $2}')
+
+    # Reindex
+    if command -v qmd &>/dev/null && [ "$TOTAL_DISPATCHED" -gt 0 ]; then
+        echo "Reindexing search index..." >&2
+        REINDEX_OUT=$("$SCRIPT_DIR/reindex.sh" 2>&1) || true
+        REINDEX_MSG=$(echo "$REINDEX_OUT" | jq -r '.message // empty' 2>/dev/null || true)
+        [ -n "$REINDEX_MSG" ] && echo "  $REINDEX_MSG" >&2
+    fi
+fi
+
+REMAINING=$((TOTAL_PENDING - TOTAL_DISPATCHED - TOTAL_FAILED))
+
+# ── Completion ───────────────────────────────────────────────────────────────
+
+SUMMARY="[Wiki] Complete: $TOTAL_DISPATCHED absorbed, $TOTAL_FAILED failed, $REMAINING remaining."
 wiki_notify "$SUMMARY"
 
-# ── Output ───────────────────────────────────────────────────────────────────
+# Agent backend: return all pending entries for the agent to process
+if [ "$WIKI_BACKEND" != "cc" ] && [ "$TOTAL_DISPATCHED" -gt 0 ]; then
+    # Collect entry paths for agent
+    ENTRIES_JSON="[]"
+    while IFS= read -r absorbed_entry; do
+        ENTRY_PATH="$ENTRIES_DIR/$absorbed_entry"
+        [ -f "$ENTRY_PATH" ] || continue
+        ENTRIES_JSON=$(echo "$ENTRIES_JSON" | jq --arg e ".entries/$absorbed_entry" '. + [$e]')
+    done < <(tail -"$TOTAL_DISPATCHED" "$ABSORBED_FILE")
 
-REINDEX_NOTE=""
-if [ "$WIKI_BACKEND" = "cc" ] && [ "$DISPATCHED" -gt 0 ]; then
-    REINDEX_NOTE="Pages are created in the background by Claude Code. Run /wiki reindex again after tasks complete."
+    jq -n \
+        --arg action "batch" \
+        --argjson extracted "${EXTRACTED:-0}" \
+        --argjson total_pending "$TOTAL_PENDING" \
+        --argjson dispatched "$TOTAL_DISPATCHED" \
+        --argjson failed "$TOTAL_FAILED" \
+        --argjson remaining "$REMAINING" \
+        --argjson entries "$ENTRIES_JSON" \
+        --arg wiki_path "$WIKI_PATH" \
+        '{
+            action: $action,
+            extracted: $extracted,
+            total_pending: $total_pending,
+            dispatched: $dispatched,
+            failed: $failed,
+            remaining: $remaining,
+            wiki_path: $wiki_path,
+            entries: $entries,
+            instructions: "Read each entry file listed above. For each entry, create wiki pages in appropriate type subdirectories following .schema.md. Update index.md and log.md after processing all entries."
+        }'
+else
+    jq -n \
+        --arg action "batch" \
+        --argjson extracted "${EXTRACTED:-0}" \
+        --argjson total_pending "$TOTAL_PENDING" \
+        --argjson dispatched "$TOTAL_DISPATCHED" \
+        --argjson failed "$TOTAL_FAILED" \
+        --argjson remaining "$REMAINING" \
+        --argjson batches "$BATCH_NUM" \
+        '{
+            action: $action,
+            extracted: $extracted,
+            total_pending: $total_pending,
+            dispatched: $dispatched,
+            failed: $failed,
+            remaining: $remaining,
+            batches: $batches,
+            message: ("Batch complete. " + ($dispatched | tostring) + " absorbed, " + ($failed | tostring) + " failed, " + ($remaining | tostring) + " remaining.")
+        }'
 fi
-
-jq -n \
-    --arg action "batch" \
-    --argjson total_pending "$TOTAL_PENDING" \
-    --argjson batch_size "$BATCH_SIZE" \
-    --argjson dispatched "$DISPATCHED" \
-    --argjson failed "$FAILED" \
-    --argjson remaining "$REMAINING" \
-    --argjson reindexed "$REINDEXED" \
-    --arg reindex_note "$REINDEX_NOTE" \
-    '{
-        action: $action,
-        total_pending: $total_pending,
-        batch_size: $batch_size,
-        dispatched: $dispatched,
-        failed: $failed,
-        remaining: $remaining,
-        reindexed: $reindexed,
-        message: ("Batch complete. " + ($dispatched | tostring) + " dispatched, " + ($failed | tostring) + " failed, " + ($remaining | tostring) + " remaining."),
-        note: (if $reindex_note != "" then $reindex_note else null end)
-    }'
