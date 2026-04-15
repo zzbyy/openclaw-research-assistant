@@ -37,33 +37,34 @@ CATALOG_FILE="$WIKI_PATH/catalog.md"
 INGESTED_FILE="$WIKI_PATH/.ingested"
 LOG_FILE="$WIKI_PATH/log.md"
 
-# Load already-ingested files
-declare -A INGESTED_MAP
+# Build a combined ingested list in a temp file (one filename per line)
+INGESTED_TMP=$(mktemp)
+trap 'rm -f "$INGESTED_TMP" "$ENTRIES_TMP" "$FORMAT_TMP"' EXIT
+
 if [ -f "$INGESTED_FILE" ]; then
-    while IFS= read -r line; do
-        [ -z "$line" ] && continue
-        INGESTED_MAP["$line"]=1
-    done < "$INGESTED_FILE"
+    cat "$INGESTED_FILE" >> "$INGESTED_TMP"
 fi
 
-# Also check log.md for ingested files
+# Also extract ingested filenames from log.md
 if [ -f "$LOG_FILE" ]; then
     while IFS='|' read -r _ _ op details _ _; do
         op=$(echo "$op" | xargs 2>/dev/null || true)
         [ "$op" = "ingest" ] || continue
         details=$(echo "$details" | xargs 2>/dev/null || true)
-        [ -n "$details" ] && INGESTED_MAP["$details"]=1
+        [ -n "$details" ] && echo "$details" >> "$INGESTED_TMP"
     done < "$LOG_FILE"
 fi
+
+# Check if a filename is in the ingested list
+is_ingested() {
+    grep -qxF "$1" "$INGESTED_TMP" 2>/dev/null
+}
 
 # Title from filename: kebab-case → Title Case
 filename_to_title() {
     local name="$1"
-    # Remove extension
     name="${name%.*}"
-    # Replace hyphens and underscores with spaces
     name=$(echo "$name" | tr '-_' '  ')
-    # Title case (capitalize first letter of each word)
     echo "$name" | awk '{for(i=1;i<=NF;i++) $i=toupper(substr($i,1,1)) tolower(substr($i,2))}1'
 }
 
@@ -84,11 +85,10 @@ human_size() {
 TOTAL=0
 TOTAL_INGESTED=0
 TOTAL_PENDING=0
-declare -A FORMAT_COUNTS
 
-# Temp file for catalog entries
+# Temp files for entries and format counts
 ENTRIES_TMP=$(mktemp)
-trap 'rm -f "$ENTRIES_TMP"' EXIT
+FORMAT_TMP=$(mktemp)
 
 for subdir in "$WIKI_SOURCES_PATH"/*/; do
     [ -d "$subdir" ] || continue
@@ -99,17 +99,18 @@ for subdir in "$WIKI_SOURCES_PATH"/*/; do
         continue
     fi
 
+    FORMAT_COUNT=0
+
     for file in "$subdir"/*; do
         [ -f "$file" ] || continue
         FILENAME="$(basename "$file")"
         TITLE=$(filename_to_title "$FILENAME")
         SIZE=$(stat -f%z "$file" 2>/dev/null || stat -c%s "$file" 2>/dev/null || echo "0")
         HUMAN_SIZE=$(human_size "$SIZE")
-        MOD_DATE=$(stat -f%Sm -t%Y-%m-%d "$file" 2>/dev/null || stat -c%y "$file" 2>/dev/null | cut -d' ' -f1 || echo "unknown")
 
         # Check ingestion status
         STATUS="pending"
-        if [ -n "${INGESTED_MAP[$FILENAME]:-}" ]; then
+        if is_ingested "$FILENAME"; then
             STATUS="ingested"
             TOTAL_INGESTED=$((TOTAL_INGESTED + 1))
         else
@@ -117,10 +118,12 @@ for subdir in "$WIKI_SOURCES_PATH"/*/; do
         fi
 
         TOTAL=$((TOTAL + 1))
-        FORMAT_COUNTS[$FORMAT]=$(( ${FORMAT_COUNTS[$FORMAT]:-0} + 1 ))
+        FORMAT_COUNT=$((FORMAT_COUNT + 1))
 
         echo "| $TITLE | $FORMAT | $HUMAN_SIZE | $STATUS | \`$FILENAME\` |" >> "$ENTRIES_TMP"
     done
+
+    [ "$FORMAT_COUNT" -gt 0 ] && echo "$FORMAT $FORMAT_COUNT" >> "$FORMAT_TMP"
 done
 
 # ── Write catalog.md ─────────────────────────────────────────────────────────
@@ -136,9 +139,9 @@ done
     echo ""
     echo "| Format | Count |"
     echo "|--------|-------|"
-    for fmt in "${!FORMAT_COUNTS[@]}"; do
-        echo "| $fmt | ${FORMAT_COUNTS[$fmt]} |"
-    done
+    while read -r fmt count; do
+        echo "| $fmt | $count |"
+    done < "$FORMAT_TMP"
     echo ""
 
     # Full table
@@ -155,9 +158,9 @@ done
 # ── Output JSON summary ─────────────────────────────────────────────────────
 
 FORMAT_JSON="{}"
-for fmt in "${!FORMAT_COUNTS[@]}"; do
-    FORMAT_JSON=$(echo "$FORMAT_JSON" | jq --arg f "$fmt" --argjson c "${FORMAT_COUNTS[$fmt]}" '.[$f] = $c')
-done
+while read -r fmt count; do
+    FORMAT_JSON=$(echo "$FORMAT_JSON" | jq --arg f "$fmt" --argjson c "$count" '.[$f] = $c')
+done < "$FORMAT_TMP"
 
 jq -n \
     --arg action "catalog" \

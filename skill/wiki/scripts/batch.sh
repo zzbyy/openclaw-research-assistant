@@ -54,25 +54,26 @@ done
 INGESTED_FILE="$WIKI_PATH/.ingested"
 LOG_FILE="$WIKI_PATH/log.md"
 
-declare -A INGESTED_MAP
+# Build combined ingested list in a temp file (compatible with Bash 3)
+INGESTED_TMP=$(mktemp)
+trap 'rm -f "$INGESTED_TMP"' EXIT
 
-# From .ingested manifest
 if [ -f "$INGESTED_FILE" ]; then
-    while IFS= read -r line; do
-        [ -z "$line" ] && continue
-        INGESTED_MAP["$line"]=1
-    done < "$INGESTED_FILE"
+    cat "$INGESTED_FILE" >> "$INGESTED_TMP"
 fi
 
-# From log.md
 if [ -f "$LOG_FILE" ]; then
     while IFS='|' read -r _ _ op details _ _; do
         op=$(echo "$op" | xargs 2>/dev/null || true)
         [ "$op" = "ingest" ] || continue
         details=$(echo "$details" | xargs 2>/dev/null || true)
-        [ -n "$details" ] && INGESTED_MAP["$details"]=1
+        [ -n "$details" ] && echo "$details" >> "$INGESTED_TMP"
     done < "$LOG_FILE"
 fi
+
+is_ingested() {
+    grep -qxF "$1" "$INGESTED_TMP" 2>/dev/null
+}
 
 # ── Find pending files ──────────────────────────────────────────────────────
 
@@ -92,7 +93,7 @@ for subdir in "$WIKI_SOURCES_PATH"/*/; do
         FILENAME="$(basename "$file")"
 
         # Skip already ingested
-        [ -n "${INGESTED_MAP[$FILENAME]:-}" ] && continue
+        is_ingested "$FILENAME" && continue
 
         # Apply match pattern (case-insensitive grep on filename)
         if [ -n "$MATCH_PATTERN" ]; then
