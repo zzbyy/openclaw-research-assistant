@@ -67,15 +67,11 @@ The script handles extraction + dedup and returns a JSON list of pending entries
 **For each entry:**
 1. Read the entry file (from `.entries/<name>.md` or `sources/markdown/<name>.md`)
 2. Understand the content: what concepts, methods, people, techniques does it cover?
-3. Create wiki pages in appropriate type subdirectories:
-   - `concepts/` — ideas, principles, theories, frameworks
-   - `methods/` — algorithms, architectures, approaches
-   - `techniques/` — practical how-to processes
-   - `books/` — book-level summary with links to concept pages
-   - `papers/` — paper summary
-   - `people/` — researchers, authors
-   - `domains/` — field-level overview
-   - Create other directories as content demands (e.g., `protocols/`, `cell-lines/`)
+3. Create wiki pages in type subdirectories — **you decide** what directories are needed
+   based on the content. Create a directory when you first need it. Don't pre-create
+   empty directories. Examples from past wikis: `concepts/`, `methods/`, `books/`,
+   `papers/`, `people/`, `domains/`, `techniques/`, `protocols/`, `cell-lines/` —
+   but use whatever makes sense for the source material.
 4. Write proper frontmatter:
    ```yaml
    ---
