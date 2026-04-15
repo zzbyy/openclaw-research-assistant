@@ -51,16 +51,19 @@ echo "Updating skill scripts..." >&2
 # Count changes
 UPDATED=0
 
-# SKILL.md and CLAUDE.md (skill instructions)
-for f in SKILL.md CLAUDE.md; do
-    if ! diff -q "$REPO_DIR/skill/wiki/$f" "$SKILL_DIR/$f" >/dev/null 2>&1; then
-        cp "$REPO_DIR/skill/wiki/$f" "$SKILL_DIR/$f"
-        UPDATED=$((UPDATED + 1))
-        echo "  [OK] $f updated" >&2
-    else
-        echo "  [--] $f unchanged" >&2
-    fi
-done
+# SKILL.md (all instructions merged here)
+if ! diff -q "$REPO_DIR/skill/wiki/SKILL.md" "$SKILL_DIR/SKILL.md" >/dev/null 2>&1; then
+    cp "$REPO_DIR/skill/wiki/SKILL.md" "$SKILL_DIR/SKILL.md"
+    UPDATED=$((UPDATED + 1))
+    echo "  [OK] SKILL.md updated" >&2
+else
+    echo "  [--] SKILL.md unchanged" >&2
+fi
+# Clean up old CLAUDE.md if it exists (merged into SKILL.md)
+if [ -f "$SKILL_DIR/CLAUDE.md" ]; then
+    rm -f "$SKILL_DIR/CLAUDE.md"
+    echo "  [OK] removed old CLAUDE.md (merged into SKILL.md)" >&2
+fi
 
 # Scripts
 for script in "$REPO_DIR/skill/wiki/scripts/"*.sh; do

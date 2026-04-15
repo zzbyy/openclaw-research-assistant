@@ -116,13 +116,13 @@ if [ -n "$EXISTING_INSTALL" ] || [ "$FORCE_UPGRADE" = true ]; then
     echo "Updating skill scripts..."
     mkdir -p "$SKILL_DEST/scripts"
     cp "$REPO_DIR/skill/wiki/SKILL.md" "$SKILL_DEST/SKILL.md"
-    cp "$REPO_DIR/skill/wiki/CLAUDE.md" "$SKILL_DEST/CLAUDE.md"
+    # Clean up old CLAUDE.md (merged into SKILL.md)
+    [ -f "$SKILL_DEST/CLAUDE.md" ] && rm -f "$SKILL_DEST/CLAUDE.md" && echo "  [OK] removed old CLAUDE.md (merged into SKILL.md)"
     for script in "$REPO_DIR/skill/wiki/scripts/"*.sh; do
         cp "$script" "$SKILL_DEST/scripts/"
         chmod +x "$SKILL_DEST/scripts/$(basename "$script")"
     done
     echo "  [OK] SKILL.md"
-    echo "  [OK] CLAUDE.md"
     echo "  [OK] scripts/ ($(ls "$SKILL_DEST/scripts/"*.sh 2>/dev/null | wc -l | tr -d ' ') files)"
 
     # Update vault schema (.schema.md only — index.md and log.md are user data)
@@ -435,7 +435,6 @@ echo "Installing skill to $SKILL_DEST..."
 mkdir -p "$SKILL_DEST/scripts"
 
 cp "$REPO_DIR/skill/wiki/SKILL.md" "$SKILL_DEST/SKILL.md"
-cp "$REPO_DIR/skill/wiki/CLAUDE.md" "$SKILL_DEST/CLAUDE.md"
 
 for script in "$REPO_DIR/skill/wiki/scripts/"*.sh; do
     cp "$script" "$SKILL_DEST/scripts/"
