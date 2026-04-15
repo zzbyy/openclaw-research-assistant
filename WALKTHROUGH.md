@@ -14,17 +14,14 @@ The installer asks two questions:
 - **Where to install**: globally or into a specific agent's workspace (lists agents from `openclaw.json`)
 - **Obsidian vault path**: where your wiki and source files will live
 
-It then sets up the vault structure, installs the skill, writes the config, and optionally installs Claude Code, cc-bridge, and QMD if missing.
+It then sets up the vault structure, installs the skill + Python extraction pipeline, and optionally installs Claude Code, cc-bridge, and QMD.
 
 ---
 
 ## 2. Verify
 
-Check the skill is installed and the vault structure looks right:
-
 ```bash
-# Your vault should have this structure:
-ls <your-vault>/wiki/          # index.md, log.md, pages/ (.schema.md is hidden)
+ls <your-vault>/wiki/          # index.md, log.md, ingest.py (.schema.md is hidden)
 ls <your-vault>/sources/       # pdfs/, html/, epub/, markdown/
 ```
 
@@ -33,24 +30,19 @@ Quick smoke test from Feishu:
 /wiki status
 ```
 
-You should get back a summary showing 0 pages, 0 sources — an empty wiki ready to go.
+You should see 0 pages, 0 sources — an empty wiki ready to go.
 
 ---
 
 ## 3. Set Up Semantic Search (Optional but Recommended)
 
-Install [QMD](https://github.com/tobi/qmd) for hybrid search (BM25 + vector + LLM reranker). Fully local, no API keys needed.
+Install [QMD](https://github.com/tobi/qmd) for hybrid search (BM25 + vector + LLM reranker). Fully local, no API keys.
 
 ```bash
 npm install -g qmd
 ```
 
-Register your wiki pages:
-```bash
-qmd add <your-vault>/wiki/pages --name wiki
-```
-
-For CJK + English papers, use a multilingual embedding model:
+For CJK + English papers, set a multilingual embedding model:
 ```bash
 echo 'export QMD_EMBED_MODEL="hf:Qwen/Qwen3-Embedding-0.6B-GGUF/Qwen3-Embedding-0.6B-Q8_0.gguf"' >> ~/.zshrc
 source ~/.zshrc
@@ -60,98 +52,95 @@ Models auto-download on first use (~2GB total). Without QMD, search falls back t
 
 ---
 
-## 4. First-Time Initialization (Large Collections)
+## 4. Add Your Sources
 
-If you have a large collection of papers, don't ingest them all at once. Use the initialization workflow:
+Copy your files into the vault's `sources/` directory:
 
-### Step 1: Drop source files into your vault
-Copy your PDFs, EPUBs, HTML, or markdown files into `<vault>/sources/pdfs/` (or the appropriate format subdirectory).
-
-### Step 2: Catalog your sources
-```
-/wiki catalog
-```
-Scans everything in `sources/` and creates `wiki/.catalog.json` — a compact JSON index of all documents with filename, format, size, and ingestion status. No LLM calls, hidden from Obsidian.
-
-Use `--quick` for counts only (instant, even with thousands of files):
-```
-/wiki catalog --quick
+```bash
+cp ~/papers/*.pdf <vault>/sources/pdfs/
+cp ~/articles/*.md <vault>/sources/markdown/
+cp ~/books/*.epub <vault>/sources/epub/
 ```
 
-### Step 3: Initialize the wiki
-```
-/wiki init
-```
-Counts sources, then dispatches the first 15 pending files for ingestion.
-
-```
-/wiki init --limit 30         # ingest first 30 instead
-/wiki init --format pdfs      # only PDFs
-```
-
-### Step 4: Continue with batches
-After the initial seed, ingest more in controlled batches:
-```
-/wiki batch --limit 10                      # next 10 pending files
-/wiki batch --limit 5 --format pdfs         # only PDFs
-/wiki batch --match "transformer" --limit 5 # filename pattern
-/wiki batch --dry-run                       # preview without ingesting
-```
-
-Search index updates automatically after each batch (incremental, fast).
-
-### Step 5: Let queries guide priorities
-Use `/wiki query` to ask questions. When the wiki can't answer, that tells you what to ingest next.
+You can also use `/wiki ingest <path>` to add a single file — it copies it to the right subdirectory automatically.
 
 ---
 
-## 5. Ingest a Single Paper
+## 5. Build the Wiki
 
-Drop a specific PDF into the wiki:
+### What happens behind the scenes
 
+When you run `/wiki batch`, two things happen automatically:
+
+**Phase 1 — Python text extraction** (fast, free, no LLM)
+- Scans `sources/pdfs/`, `sources/epub/` for unextracted files
+- Extracts text + metadata from each PDF/EPUB/MOBI
+- Writes clean markdown entries to `wiki/.entries/`
+- Markdown and HTML source files skip this step — they're already readable
+
+**Phase 2 — LLM absorption** (creates wiki pages)
+- Reads each entry from `.entries/` (or markdown/HTML sources directly)
+- Identifies key concepts, methods, people, techniques
+- Creates wiki pages in type subdirectories (e.g., `concepts/`, `methods/`, `books/`)
+- Subdirectories are created dynamically based on content — not predefined
+- Cross-references between pages via `[[wikilinks]]`
+- Updates `index.md` and `log.md`
+
+### Commands
+
+**Process a single batch:**
 ```
-/wiki ingest ~/papers/attention-is-all-you-need.pdf
-```
-
-What happens behind the scenes:
-1. The PDF is copied to `<vault>/sources/pdfs/`
-2. Claude Code (or the research agent) reads the full paper
-3. Wiki pages are created in `<vault>/wiki/pages/` with structured frontmatter:
-   - Entity type (concept, method, paper, person)
-   - Confidence scoring
-   - Typed relationships (depends_on, used_by, related)
-   - Source citations
-4. `index.md` is updated with new entries
-5. `log.md` gets an append-only record
-6. Search index is updated (if QMD installed)
-7. You get a notification in Feishu when done
-
-Open Obsidian — you should see new pages in `wiki/pages/`, linked in the graph view.
-
-### Supported formats
-
-| Format | Extension | Notes |
-|--------|-----------|-------|
-| PDF | `.pdf` | Academic papers, reports — Claude reads them natively |
-| HTML | `.html`, `.htm` | Saved web articles |
-| EPUB | `.epub` | Books, long-form content |
-| Markdown | `.md`, `.txt` | Clipped articles, notes |
-
-### Backend choice
-
-Add `--backend cc` or `--backend agent` to any command:
-
-```
-/wiki ingest paper.pdf --backend cc       # Claude Code (heavy lifting)
-/wiki ingest article.md --backend agent   # Research agent (lighter)
+/wiki batch                     # extract all pending → absorb next 10
+/wiki batch --limit 30          # absorb next 30
 ```
 
-**When to use which:**
+**Process everything automatically:**
+```
+/wiki batch --auto              # extract all → absorb all, loop until done
+```
 
-| Backend | Best for |
-|---------|----------|
-| `cc` (Claude Code) | PDFs, EPUBs, complex papers, batch ingestion, full lint |
-| `agent` (OpenClaw) | Quick queries, search, browse, conversational Q&A |
+**Preview first:**
+```
+/wiki batch --dry-run           # show what would be processed
+```
+
+**Filter:**
+```
+/wiki batch --match "CAR-T"     # only matching entries
+```
+
+**Backend choice:**
+```
+/wiki batch --auto                        # uses OpenClaw agent (default, cheaper)
+/wiki batch --auto --backend cc           # uses Claude Code (heavier, more capable)
+```
+
+### First-time with 1600+ papers
+
+```
+/wiki batch --auto
+```
+
+This extracts all PDFs first (takes minutes, free), then feeds entries to the agent batch by batch. Progress notifications arrive in Feishu:
+
+```
+[Wiki] Step 1: Extracting text from sources...
+[Wiki] Extracted 1688 new entries (3 failed)
+[Wiki] Auto batch: 1688 entries to process (batches of 10)
+[Wiki] Absorbing batch 1 (10 entries)...
+[Wiki] Batch 1: 10/10 absorbed...
+[Wiki] Absorbing batch 2 (10 entries)...
+...
+[Wiki] Complete: 1688 absorbed, 3 failed, 0 remaining.
+```
+
+### After ingestion
+
+Open Obsidian — you'll see:
+- Type subdirectories: `concepts/`, `methods/`, `books/`, `people/`, etc.
+- Wiki pages with structured frontmatter and `[[wikilinks]]`
+- Graph view showing connections between concepts
+- `index.md` with a categorized master index
 
 ---
 
@@ -160,201 +149,120 @@ Add `--backend cc` or `--backend agent` to any command:
 Ask questions about what you've ingested:
 
 ```
-/wiki query "what is the key innovation in transformer architecture?"
+/wiki query "what is the key innovation in CAR-T therapy?"
 ```
 
 The answer comes back with:
-- `[[wikilinks]]` citing the relevant wiki pages
-- Confidence levels noted (e.g., "self-attention (high confidence) enables...")
+- `[[wikilinks]]` citing relevant wiki pages
 - Gaps identified if the wiki doesn't cover something yet
 
-When QMD is installed, queries use hybrid semantic search (BM25 + vector + LLM reranker) to find the most relevant pages — even when exact keywords don't match.
+When QMD is installed, queries use hybrid semantic search to find relevant pages — even when exact keywords don't match.
 
 ### Conversational mode
 
-You don't need `/wiki query` for everything. Just talk naturally to the research agent in Feishu:
+Just talk naturally to the research agent in Feishu:
 
-> "How does self-attention differ from cross-attention?"
+> "How do dendritic cell vaccines compare to CAR-T?"
 
-The agent reads the relevant wiki pages and synthesizes an answer. No command needed.
+The agent reads relevant wiki pages and synthesizes an answer. No command needed.
 
 ---
 
 ## 7. Search & Browse
 
-Find pages by keyword:
+**Keyword search:**
 ```
 /wiki search attention
 ```
 
-For semantic search (finds conceptual matches, not just exact keywords):
+**Semantic search** (finds conceptual matches):
 ```
 /wiki search "manufacturing challenges" --semantic
 ```
 
-Returns matching pages with titles, types, confidence levels, and content snippets.
-
-Read a specific page:
+**Read a page:**
 ```
 /wiki browse self-attention
 ```
 
-Returns the full page content including frontmatter.
-
-Explore connections:
+**Explore connections:**
 ```
 /wiki related transformer-architecture
 ```
 
-Shows all typed relationships: what it depends on, what uses it, what it supersedes, what's related — plus backlinks (pages that link to it).
+Shows typed relationships: depends_on, used_by, supersedes, related — plus backlinks.
 
 ---
 
 ## 8. Lint — Keep the Wiki Healthy
 
-Run a health check:
 ```
 /wiki lint
 ```
 
-The lint checks for:
+Checks for:
 - **Contradictions** — pages with conflicting claims
 - **Orphan pages** — not linked from index or other pages
 - **Broken wikilinks** — `[[links]]` pointing to non-existent pages
-- **Stale pages** — not verified in 90+ days, confidence gets lowered
 - **Missing cross-references** — pages discussing same topics without linking
-- **Entity relationship integrity** — typed links are valid and bidirectional
+- **Index completeness** — pages missing from `index.md`
 
-### Contradiction handling
-
-When you ingest a new paper that contradicts existing knowledge, the wiki doesn't silently overwrite. Instead:
-
-1. A `> [!warning] Contradiction` callout is added to affected pages
-2. The contradiction is flagged in the ingest output
-3. Confidence is lowered if warranted
-4. You decide how to resolve it
+When contradictions are found, a `> [!warning] Contradiction` callout is added — the wiki doesn't silently overwrite.
 
 ---
 
 ## 9. Obsidian Integration
 
-Your wiki is native Obsidian markdown. Everything works out of the box:
+Your wiki is native Obsidian markdown. Everything works:
 
-- **Graph view** — see connections between concepts, methods, papers, people
+- **Graph view** — connections between concepts, methods, papers, people
 - **Wikilinks** — `[[page-name]]` links work throughout
 - **Tags** — `#topic/subtopic` tags are browsable
 - **Frontmatter** — visible in reading view and properties panel
 
-If Obsidian skills are installed (in Claude Code or OpenClaw), the wiki uses them for proper Obsidian formatting when creating pages.
+If Obsidian skills are installed, the wiki uses them for proper formatting.
 
 ### Dataview queries
 
-Install the [Dataview](https://github.com/blacksmithgu/obsidian-dataview) plugin for powerful queries:
-
 ```dataview
-TABLE type, confidence, source_count
-FROM "wiki/pages"
-WHERE type = "method"
-SORT confidence DESC
+TABLE type, sources
+FROM "wiki/concepts"
+SORT title ASC
 ```
 
 ```dataview
 LIST
-FROM "wiki/pages"
-WHERE contains(depends_on, "[[transformer-architecture]]")
-```
-
-```dataview
-TABLE status, last_verified
-FROM "wiki/pages"
-WHERE status = "stale"
+FROM "wiki/methods"
+WHERE contains(related, "[[CAR-T]]")
 ```
 
 ---
 
 ## 10. Scheduled Automation (Optional)
 
-Set up periodic jobs via OpenClaw cron:
-
-### Weekly lint
 ```
-/wiki cron lint --every "sunday 9am"
-```
-
-### Daily auto-ingest
-Automatically picks up new files dropped into `sources/`:
-```
-/wiki cron ingest --every "daily 6am"
-```
-
-### Manage schedules
-```
-/wiki cron status                    # show current schedules
-/wiki cron lint --disable            # turn off weekly lint
-/wiki cron ingest --disable          # turn off auto-ingest
-```
-
-Results are sent to your Feishu channel as notifications.
-
----
-
-## 11. Search Index Management
-
-If QMD is installed, the search index updates automatically after ingest/batch. You can also manage it manually:
-
-```
-/wiki reindex              # incremental — only new/changed pages
-/wiki reindex --full       # full re-embed (after model change)
-```
-
-To check QMD status:
-```bash
-qmd status
+/wiki cron lint --every "sunday 9am"        # weekly health check
+/wiki cron ingest --every "daily 6am"       # daily auto-ingest new sources
+/wiki cron status                           # show schedules
+/wiki cron lint --disable                   # turn off
 ```
 
 ---
 
-## 12. Configuration
+## 11. Configuration
 
-View or update settings:
 ```
 /wiki config                                  # show all
-/wiki config vault_path                       # show specific key
-/wiki config default_backend agent            # change default backend
-/wiki config confidence.stale_after_days 60   # stricter staleness
+/wiki config default_backend cc               # switch to Claude Code
+/wiki config batch.default_limit 20           # change batch size
+/wiki config notifications.progress_interval 5  # progress every 5 files
 ```
 
-Config lives alongside the skill in the agent's workspace (`config.json`).
+Config lives alongside the skill (`config.json`).
 
 ---
 
-## 13. Building Your Wiki — Tips
-
-### Start with a handful of foundational papers
-Don't ingest everything at once. Start with 15-30 core papers in your area. Let the wiki build a strong foundation of cross-referenced concepts, then add more incrementally via `/wiki batch`.
-
-### Review the first few ingestions in Obsidian
-After your first few ingests, open the wiki in Obsidian. Check that:
-- Page titles make sense
-- Cross-references are meaningful
-- The index is organized well
-- The graph view shows useful connections
-
-### Use queries to find gaps
-Ask questions you care about. When the wiki can't answer, that tells you what to ingest next.
-
-### Run lint periodically
-Even without cron, run `/wiki lint` weekly. It catches:
-- Pages that drifted out of sync
-- Concepts that should be linked but aren't
-- Stale information that needs re-verification
-
-### Let contradictions accumulate, then resolve
-Don't resolve every contradiction immediately. Let them build up, then review them in batch — you'll often see patterns that make the right resolution obvious.
-
----
-
-## 14. Troubleshooting
+## 12. Troubleshooting
 
 **No response from `/wiki` commands?**
 ```bash
@@ -362,39 +270,39 @@ openclaw skills info wiki
 openclaw gateway restart
 ```
 
-**Ingest seems stuck?**
-If using `--backend cc`, check cc-bridge task status:
+**Extraction failed for some PDFs?**
+Install better extractors:
+```bash
+brew install poppler                         # pdftotext
+pip install PyPDF2 ebooklib beautifulsoup4 lxml  # Python fallbacks
 ```
-/cc-status
-```
-
-**Config issues?**
-```
-/wiki config
-```
-Verify vault_path points to your actual Obsidian vault.
-
-**Pages not showing in Obsidian?**
-Make sure your Obsidian vault path matches the `vault_path` in config. The wiki pages live at `<vault>/wiki/pages/`.
 
 **Search not finding pages?**
 ```
-/wiki reindex           # rebuild the search index
-qmd status              # check QMD health
+/wiki reindex
+```
+
+**Want to start over?**
+Delete wiki content (keep sources):
+```bash
+rm -rf <vault>/wiki/concepts <vault>/wiki/books <vault>/wiki/methods ...
+rm -f <vault>/wiki/.entries/.absorbed
+rm -f <vault>/wiki/index.md <vault>/wiki/log.md
+# Re-run install to restore index.md and log.md templates
 ```
 
 ---
 
-## 15. Upgrading
+## 13. Upgrading
 
-From Feishu (no terminal needed):
+From Feishu:
 ```
 /wiki upgrade
 ```
 
-Or from terminal:
+From terminal:
 ```bash
 curl -sSL https://raw.githubusercontent.com/zzbyy/openclaw-research-assistant/main/remote-install.sh | bash
 ```
 
-Both are idempotent — config, wiki pages, sources, and search index are preserved. Only skill scripts and schema are updated.
+Both are idempotent — config, wiki pages, sources, and search index are preserved.
