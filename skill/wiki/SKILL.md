@@ -94,29 +94,15 @@ and editing markdown files.
 
 ### Parallel Processing for Batch
 
-When absorbing many entries, **spawn parallel subagents** to process faster.
-Decide based on entry count:
+When absorbing multiple entries, you can spawn subagents to process them in parallel.
+You decide whether to use subagents and how many based on the workload.
 
-| Entries | Strategy |
-|---------|----------|
-| 1–3 | Process directly, one by one |
-| 4–10 | Spawn 2–3 subagents, each gets a subset |
-| 11–30 | Spawn 3–5 subagents |
-| 30+ | Spawn 5–8 subagents |
+Each subagent should:
+- Get a subset of entries to process
+- Read `index.md` first to avoid creating duplicate pages
+- Create wiki pages and append to the absorbed manifest
 
-Each subagent:
-- Gets a slice of the entry list
-- Reads entries and creates wiki pages independently
-- Appends to the absorbed manifest when done
-
-After all subagents finish:
-- Consolidate `index.md` (merge all new entries)
-- Run `exec scripts/wiki-entry.sh reindex` to update the search index
-- Report total pages created, any issues
-
-**Important**: subagents should read `index.md` at the start to avoid creating
-duplicate pages. If two subagents would create the same page, the second one
-should update rather than duplicate.
+After all subagents finish, consolidate `index.md`, run reindex, and report results.
 
 ### 2. Answer Queries
 
