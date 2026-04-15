@@ -97,6 +97,52 @@ else
     EXTRACT_FAILED=0
 fi
 
+# ── Step 1.5: Dedup entries ───────────────────────────────────────────────────
+
+CONTENT_HASHES="$ENTRIES_DIR/.content-hashes"
+DEDUPED_FILE="$ENTRIES_DIR/.deduped"
+touch "$CONTENT_HASHES" "$DEDUPED_FILE"
+
+DEDUP_NEW=0
+DEDUP_DUPES=0
+
+echo "Step 1.5: Deduplicating entries..." >&2
+
+for entry in "$ENTRIES_DIR"/*.md; do
+    [ -f "$entry" ] || continue
+    ENTRY_NAME="$(basename "$entry")"
+
+    # Skip if already in content-hashes or deduped
+    grep -qF "$ENTRY_NAME" "$CONTENT_HASHES" 2>/dev/null && continue
+    grep -qxF "$ENTRY_NAME" "$DEDUPED_FILE" 2>/dev/null && continue
+
+    # Hash the body (skip YAML frontmatter between --- markers)
+    BODY_HASH=$(awk '/^---$/{n++; next} n>=2{print}' "$entry" | md5 -q 2>/dev/null || \
+                awk '/^---$/{n++; next} n>=2{print}' "$entry" | md5sum 2>/dev/null | cut -d' ' -f1 || echo "")
+
+    if [ -z "$BODY_HASH" ]; then
+        continue
+    fi
+
+    # Check if this hash already exists
+    if grep -q "^${BODY_HASH}" "$CONTENT_HASHES" 2>/dev/null; then
+        # Duplicate — mark it
+        echo "$ENTRY_NAME" >> "$DEDUPED_FILE"
+        DEDUP_DUPES=$((DEDUP_DUPES + 1))
+    else
+        # New unique entry — record it
+        printf '%s\t%s\n' "$BODY_HASH" "$ENTRY_NAME" >> "$CONTENT_HASHES"
+        DEDUP_NEW=$((DEDUP_NEW + 1))
+    fi
+done
+
+if [ "$DEDUP_DUPES" -gt 0 ]; then
+    echo "  Dedup: $DEDUP_DUPES duplicates found, $DEDUP_NEW unique new entries" >&2
+    wiki_notify "[Wiki] Dedup: $DEDUP_DUPES duplicates skipped"
+elif [ "$DEDUP_NEW" -gt 0 ]; then
+    echo "  Dedup: $DEDUP_NEW new unique entries, no duplicates" >&2
+fi
+
 # ── Step 2: Find unabsorbed entries ──────────────────────────────────────────
 
 find_pending_entries() {
@@ -107,8 +153,9 @@ find_pending_entries() {
         [ -f "$entry" ] || continue
         ENTRY_NAME="$(basename "$entry")"
 
-        # Skip if already absorbed
+        # Skip if already absorbed or deduped
         grep -qxF "$ENTRY_NAME" "$ABSORBED_FILE" 2>/dev/null && continue
+        grep -qxF "$ENTRY_NAME" "$DEDUPED_FILE" 2>/dev/null && continue
 
         # Apply match pattern
         if [ -n "$MATCH_PATTERN" ]; then
