@@ -52,87 +52,120 @@ Models auto-download on first use (~2GB total). Without QMD, search falls back t
 
 ---
 
-## 4. Add Your Sources
+## 4. Initialize: Building the Wiki from Existing Sources
 
-Copy your files into the vault's `sources/` directory:
+If you have an existing collection of papers/books (e.g., exported from EndNote), follow these steps to initialize your wiki.
+
+### Step 1: Deduplicate (if needed)
+
+If your source files may contain duplicates (common with EndNote exports from multiple libraries):
+
+```bash
+# Preview duplicates (no changes)
+python3 <vault>/wiki/dedup.py ~/your-merged-pdfs/
+
+# Actually move duplicates to a dupes/ subfolder
+python3 <vault>/wiki/dedup.py ~/your-merged-pdfs/ --apply
+
+# Also detect near-duplicates (same paper, different downloads)
+python3 <vault>/wiki/dedup.py ~/your-merged-pdfs/ --fuzzy --apply
+```
+
+### Step 2: Copy sources into the vault
 
 ```bash
 cp ~/papers/*.pdf <vault>/sources/pdfs/
-cp ~/articles/*.md <vault>/sources/markdown/
 cp ~/books/*.epub <vault>/sources/epub/
+cp ~/articles/*.md <vault>/sources/markdown/
 ```
 
----
-
-## 5. Build the Wiki
-
-### What happens behind the scenes
-
-When you run `/wiki batch`, two things happen automatically:
-
-**Phase 1 — Python text extraction** (fast, free, no LLM)
-- Scans `sources/pdfs/`, `sources/epub/` for unextracted files
-- Extracts text + metadata from each PDF/EPUB/MOBI
-- Writes clean markdown entries to `wiki/.entries/`
-- Markdown and HTML source files skip this step — they're already readable
-
-**Phase 2 — LLM absorption** (creates wiki pages)
-- Reads each entry from `.entries/` (or markdown/HTML sources directly)
-- Identifies key concepts, methods, people, techniques
-- Creates wiki pages in type subdirectories (e.g., `concepts/`, `methods/`, `books/`)
-- Subdirectories are created dynamically based on content — not predefined
-- Cross-references between pages via `[[wikilinks]]`
-- Updates `index.md` and `log.md`
-
-### Commands
-
-**Process a single batch:**
-```
-/wiki batch                     # extract all pending → absorb next 10
-/wiki batch --limit 30          # absorb next 30
-```
-
-**Process everything automatically:**
-```
-/wiki batch --auto              # extract all → absorb all, loop until done
-```
-
-**Preview first:**
-```
-/wiki batch --dry-run           # show what would be processed
-```
-
-**Filter:**
-```
-/wiki batch --match "CAR-T"     # only matching entries
-```
-
-**Backend choice:**
-```
-/wiki batch --auto                        # uses OpenClaw agent (default, cheaper)
-/wiki batch --auto --backend cc           # uses Claude Code (heavier, more capable)
-```
-
-### First-time with 1600+ papers
+### Step 3: Run batch processing
 
 ```
 /wiki batch --auto
 ```
 
-This extracts all PDFs first (takes minutes, free), then feeds entries to the agent batch by batch. Progress notifications arrive in Feishu:
+This runs the full pipeline automatically:
+
+```
+Step 1:   Extract text from PDFs/EPUBs (Python, fast, free)
+Step 1.5: Deduplicate entries (hash body text, skip duplicates)
+Step 2:   Absorb unique entries into wiki pages (LLM, batch by batch)
+            └→ Reindex search after each batch (QMD, if installed)
+```
+
+Progress notifications arrive in Feishu:
 
 ```
 [Wiki] Step 1: Extracting text from sources...
 [Wiki] Extracted 1688 new entries (3 failed)
-[Wiki] Auto batch: 1688 entries to process (batches of 10)
+[Wiki] Dedup: 342 duplicates skipped
+[Wiki] Auto batch: 1346 entries to process (batches of 10)
 [Wiki] Absorbing batch 1 (10 entries)...
-[Wiki] Batch 1: 10/10 absorbed...
-[Wiki] Absorbing batch 2 (10 entries)...
 ...
-[Wiki] Complete: 1688 absorbed, 3 failed, 0 remaining.
+[Wiki] Complete: 1346 absorbed, 0 failed, 0 remaining.
 ```
 
-You can also use `/wiki ingest <path>` to add a single file — it copies it to the right subdirectory automatically.
+### Step 4: Review in Obsidian
+
+Open your vault — you'll see type subdirectories created dynamically based on your content. Check:
+- `index.md` — master catalog
+- Graph view — connections between concepts
+- Type folders — `concepts/`, `books/`, `methods/`, etc.
+
+---
+
+## 5. Ongoing: Adding New Sources
+
+Once the wiki is initialized, adding new papers is simple.
+
+### Single file
+
+```
+/wiki ingest ~/papers/new-paper.pdf
+```
+
+This copies the file to `sources/pdfs/`, extracts text, checks for duplicates against existing entries, and dispatches absorption. One command, everything handled.
+
+### Batch of new files
+
+Drop files into the sources folder, then run batch:
+
+```bash
+# Copy new files
+cp ~/new-papers/*.pdf <vault>/sources/pdfs/
+
+# Process them
+/wiki batch
+```
+
+### What happens behind the scenes
+
+Every `/wiki batch` or `/wiki ingest` runs the same pipeline:
+
+| Step | What | How | Cost |
+|------|------|-----|------|
+| **1. Extract** | Convert PDF/EPUB/MOBI to text | Python (`pdftotext`, `ebooklib`) | Free, ~1s per file |
+| **1.5. Dedup** | Skip entries with identical text content | MD5 hash against persistent `.content-hashes` | Free, instant |
+| **2. Absorb** | Create wiki pages from unique entries | LLM (agent or Claude Code) | Model usage per entry |
+| **3. Reindex** | Update search index with new pages | QMD (if installed) | Free, incremental |
+
+- **Already extracted?** Skipped (tracked by file ID in `.entries/`)
+- **Already absorbed?** Skipped (tracked in `.entries/.absorbed`)
+- **Duplicate content?** Skipped (tracked in `.entries/.content-hashes`)
+- **Markdown/HTML sources?** Read directly by the LLM — no extraction needed
+
+### Batch options
+
+```
+/wiki batch                     # extract + dedup + absorb next 10
+/wiki batch --limit 30          # absorb 30
+/wiki batch --auto              # process everything, loop until done
+/wiki batch --match "CAR-T"     # only matching entries
+/wiki batch --dry-run           # preview without absorbing
+/wiki batch --backend cc        # use Claude Code instead of agent
+/wiki config batch.default_limit 20  # change default batch size
+```
 
 ### After ingestion
 
