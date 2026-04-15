@@ -71,6 +71,18 @@ fi
 mkdir -p "$ENTRIES_DIR"
 touch "$ABSORBED_FILE"
 
+# ── Show active backend ──────────────────────────────────────────────────────
+
+if [ "$WIKI_BACKEND" = "cc" ]; then
+    echo "⚠️  Backend: Claude Code (cc) — this uses your Claude API quota!" >&2
+    echo "    To use the cheaper OpenClaw agent instead: /wiki batch --backend agent" >&2
+    echo "    Or set default: /wiki config default_backend agent" >&2
+    wiki_notify "⚠️ [Wiki] Using Claude Code backend — uses API quota. Use --backend agent for cheaper processing."
+else
+    echo "Backend: OpenClaw agent" >&2
+fi
+echo "" >&2
+
 # ── Step 1: Extract — Python processes all pending sources ───────────────────
 
 HAS_PYTHON=false

@@ -76,6 +76,12 @@ if [ ! -f "$DEST_FILE" ]; then
     cp "$SOURCE_PATH" "$DEST_FILE"
 fi
 
+# ── Show active backend ──────────────────────────────────────────────────────
+
+if [ "$WIKI_BACKEND" = "cc" ]; then
+    echo "⚠️  Backend: Claude Code (cc) — uses API quota" >&2
+fi
+
 # ── Phase 1: Python text extraction ──────────────────────────────────────────
 
 ENTRIES_DIR="$WIKI_PATH/.entries"
