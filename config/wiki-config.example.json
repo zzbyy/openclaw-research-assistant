@@ -27,5 +27,8 @@
   },
   "confidence": {
     "stale_after_days": 90
+  },
+  "batch": {
+    "default_limit": 10
   }
 }

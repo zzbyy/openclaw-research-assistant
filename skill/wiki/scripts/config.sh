@@ -37,6 +37,7 @@ ALLOWED_KEYS=(
     "cron.ingest.schedule"
     "cron.ingest.backend"
     "confidence.stale_after_days"
+    "batch.default_limit"
 )
 
 is_allowed_key() {

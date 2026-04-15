@@ -14,7 +14,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # ── Parse args ───────────────────────────────────────────────────────────────
 
-LIMIT=10
+DEFAULT_LIMIT=$([ -f "$WIKI_CONFIG_FILE" ] && jq -r '.batch.default_limit // 10' "$WIKI_CONFIG_FILE" 2>/dev/null || echo "10")
+LIMIT="$DEFAULT_LIMIT"
 FORMAT_FILTER=""
 MATCH_PATTERN=""
 DRY_RUN=false
