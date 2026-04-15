@@ -41,8 +41,8 @@ done
 
 # ── Step 1: Run catalog ─────────────────────────────────────────────────────
 
-echo "Step 1/2: Cataloging all sources..." >&2
-CATALOG_RESULT=$("$SCRIPT_DIR/catalog.sh" 2>/dev/null)
+echo "Step 1/2: Counting sources..." >&2
+CATALOG_RESULT=$("$SCRIPT_DIR/catalog.sh" --quick 2>/dev/null)
 TOTAL=$(echo "$CATALOG_RESULT" | jq -r '.total')
 PENDING=$(echo "$CATALOG_RESULT" | jq -r '.pending')
 INGESTED=$(echo "$CATALOG_RESULT" | jq -r '.ingested')

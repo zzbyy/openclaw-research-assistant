@@ -2,8 +2,9 @@
 # catalog.sh — Scan sources/ and build a lightweight catalog of all documents
 # No deep ingestion — just metadata from filenames, file size, format.
 # Creates/updates wiki/catalog.md and marks ingestion status.
+# Optimized for large collections (1000+ files) — bulk operations, minimal subprocesses.
 #
-# Usage: catalog.sh [--format pdf|html|epub|markdown] [--refresh]
+# Usage: catalog.sh [--format pdf|html|epub|markdown] [--quick]
 # Env: WIKI_PATH, WIKI_SOURCES_PATH
 
 set -e
@@ -13,7 +14,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # ── Parse args ───────────────────────────────────────────────────────────────
 
 FORMAT_FILTER=""
-REFRESH=false
+QUICK=false
 
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -21,8 +22,8 @@ while [[ $# -gt 0 ]]; do
             FORMAT_FILTER="$2"
             shift 2
             ;;
-        --refresh)
-            REFRESH=true
+        --quick)
+            QUICK=true
             shift
             ;;
         *)
@@ -31,100 +32,123 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-# ── Scan sources ─────────────────────────────────────────────────────────────
+# ── Setup ────────────────────────────────────────────────────────────────────
 
 CATALOG_FILE="$WIKI_PATH/catalog.md"
 INGESTED_FILE="$WIKI_PATH/.ingested"
 LOG_FILE="$WIKI_PATH/log.md"
 
-# Build a combined ingested list in a temp file (one filename per line)
-INGESTED_TMP=$(mktemp)
-trap 'rm -f "$INGESTED_TMP" "$ENTRIES_TMP" "$FORMAT_TMP"' EXIT
+TMPDIR_WORK=$(mktemp -d)
+trap 'rm -rf "$TMPDIR_WORK"' EXIT
 
-if [ -f "$INGESTED_FILE" ]; then
-    cat "$INGESTED_FILE" >> "$INGESTED_TMP"
-fi
+# Build combined ingested list
+INGESTED_TMP="$TMPDIR_WORK/ingested"
+touch "$INGESTED_TMP"
 
-# Also extract ingested filenames from log.md
+[ -f "$INGESTED_FILE" ] && cat "$INGESTED_FILE" >> "$INGESTED_TMP"
+
 if [ -f "$LOG_FILE" ]; then
-    while IFS='|' read -r _ _ op details _ _; do
-        op=$(echo "$op" | xargs 2>/dev/null || true)
-        [ "$op" = "ingest" ] || continue
-        details=$(echo "$details" | xargs 2>/dev/null || true)
-        [ -n "$details" ] && echo "$details" >> "$INGESTED_TMP"
-    done < "$LOG_FILE"
+    awk -F'|' '$3 ~ /ingest/ { gsub(/^ +| +$/, "", $4); if ($4 != "") print $4 }' "$LOG_FILE" >> "$INGESTED_TMP"
 fi
 
-# Check if a filename is in the ingested list
-is_ingested() {
-    grep -qxF "$1" "$INGESTED_TMP" 2>/dev/null
-}
+# Sort and deduplicate for fast lookup
+sort -u "$INGESTED_TMP" -o "$INGESTED_TMP"
 
-# Title from filename: kebab-case → Title Case
-filename_to_title() {
-    local name="$1"
-    name="${name%.*}"
-    name=$(echo "$name" | tr '-_' '  ')
-    echo "$name" | awk '{for(i=1;i<=NF;i++) $i=toupper(substr($i,1,1)) tolower(substr($i,2))}1'
-}
+# ── Quick mode: counts only, no catalog.md ───────────────────────────────────
 
-# Human-readable file size
-human_size() {
-    local bytes="$1"
-    if [ "$bytes" -ge 1048576 ]; then
-        echo "$((bytes / 1048576))MB"
-    elif [ "$bytes" -ge 1024 ]; then
-        echo "$((bytes / 1024))KB"
-    else
-        echo "${bytes}B"
-    fi
-}
+if [ "$QUICK" = true ]; then
+    FORMAT_JSON="{}"
+    TOTAL=0
+    for subdir in "$WIKI_SOURCES_PATH"/*/; do
+        [ -d "$subdir" ] || continue
+        FORMAT="$(basename "$subdir")"
+        [ -n "$FORMAT_FILTER" ] && [ "$FORMAT" != "$FORMAT_FILTER" ] && continue
+        COUNT=$(find "$subdir" -maxdepth 1 -type f | wc -l | tr -d ' ')
+        TOTAL=$((TOTAL + COUNT))
+        FORMAT_JSON=$(echo "$FORMAT_JSON" | jq --arg f "$FORMAT" --argjson c "$COUNT" '.[$f] = $c')
+    done
 
-# ── Build catalog ────────────────────────────────────────────────────────────
+    INGESTED_COUNT=$(wc -l < "$INGESTED_TMP" | tr -d ' ')
+    PENDING=$((TOTAL - INGESTED_COUNT))
+    [ "$PENDING" -lt 0 ] && PENDING=0
+
+    jq -n \
+        --arg action "catalog" \
+        --argjson total "$TOTAL" \
+        --argjson ingested "$INGESTED_COUNT" \
+        --argjson pending "$PENDING" \
+        --argjson by_format "$FORMAT_JSON" \
+        '{
+            action: $action,
+            total: $total,
+            ingested: $ingested,
+            pending: $pending,
+            by_format: $by_format,
+            message: ("Quick catalog: " + ($total | tostring) + " documents (" + ($ingested | tostring) + " ingested, " + ($pending | tostring) + " pending).")
+        }'
+    exit 0
+fi
+
+# ── Full catalog: build catalog.md ───────────────────────────────────────────
+
+# Use find + stat in bulk, pipe through awk for all processing
+# Output: format\tsize\tfilename\tstatus lines
+ENTRIES_TMP="$TMPDIR_WORK/entries"
+FORMAT_TMP="$TMPDIR_WORK/formats"
 
 TOTAL=0
 TOTAL_INGESTED=0
 TOTAL_PENDING=0
 
-# Temp files for entries and format counts
-ENTRIES_TMP=$(mktemp)
-FORMAT_TMP=$(mktemp)
-
 for subdir in "$WIKI_SOURCES_PATH"/*/; do
     [ -d "$subdir" ] || continue
     FORMAT="$(basename "$subdir")"
+    [ -n "$FORMAT_FILTER" ] && [ "$FORMAT" != "$FORMAT_FILTER" ] && continue
 
-    # Apply format filter
-    if [ -n "$FORMAT_FILTER" ] && [ "$FORMAT" != "$FORMAT_FILTER" ]; then
-        continue
-    fi
+    # Get all files with sizes in one find call (macOS stat format)
+    find "$subdir" -maxdepth 1 -type f -exec stat -f '%z %N' {} \; 2>/dev/null | \
+    while IFS= read -r line; do
+        SIZE="${line%% *}"
+        FILEPATH="${line#* }"
+        FILENAME="$(basename "$FILEPATH")"
 
-    FORMAT_COUNT=0
+        # Title: remove extension, replace - and _ with space
+        TITLE="${FILENAME%.*}"
+        TITLE=$(echo "$TITLE" | tr '-_' '  ')
 
-    for file in "$subdir"/*; do
-        [ -f "$file" ] || continue
-        FILENAME="$(basename "$file")"
-        TITLE=$(filename_to_title "$FILENAME")
-        SIZE=$(stat -f%z "$file" 2>/dev/null || stat -c%s "$file" 2>/dev/null || echo "0")
-        HUMAN_SIZE=$(human_size "$SIZE")
-
-        # Check ingestion status
-        STATUS="pending"
-        if is_ingested "$FILENAME"; then
-            STATUS="ingested"
-            TOTAL_INGESTED=$((TOTAL_INGESTED + 1))
+        # Human size (inline, no subprocess)
+        if [ "$SIZE" -ge 1048576 ]; then
+            HSIZE="$((SIZE / 1048576))MB"
+        elif [ "$SIZE" -ge 1024 ]; then
+            HSIZE="$((SIZE / 1024))KB"
         else
-            TOTAL_PENDING=$((TOTAL_PENDING + 1))
+            HSIZE="${SIZE}B"
         fi
 
-        TOTAL=$((TOTAL + 1))
-        FORMAT_COUNT=$((FORMAT_COUNT + 1))
+        # Ingestion status via sorted file lookup
+        if grep -qxF "$FILENAME" "$INGESTED_TMP" 2>/dev/null; then
+            STATUS="ingested"
+        else
+            STATUS="pending"
+        fi
 
-        echo "| $TITLE | $FORMAT | $HUMAN_SIZE | $STATUS | \`$FILENAME\` |" >> "$ENTRIES_TMP"
+        echo "| $TITLE | $FORMAT | $HSIZE | $STATUS | \`$FILENAME\` |"
     done
+done > "$ENTRIES_TMP"
 
-    [ "$FORMAT_COUNT" -gt 0 ] && echo "$FORMAT $FORMAT_COUNT" >> "$FORMAT_TMP"
-done
+# Count totals from the entries file (fast)
+TOTAL=$(wc -l < "$ENTRIES_TMP" | tr -d ' ')
+TOTAL_INGESTED=$(grep -c '| ingested |' "$ENTRIES_TMP" 2>/dev/null || echo "0")
+TOTAL_PENDING=$((TOTAL - TOTAL_INGESTED))
+
+# Format counts
+for subdir in "$WIKI_SOURCES_PATH"/*/; do
+    [ -d "$subdir" ] || continue
+    FORMAT="$(basename "$subdir")"
+    [ -n "$FORMAT_FILTER" ] && [ "$FORMAT" != "$FORMAT_FILTER" ] && continue
+    COUNT=$(grep -c "| $FORMAT |" "$ENTRIES_TMP" 2>/dev/null || echo "0")
+    [ "$COUNT" -gt 0 ] && echo "$FORMAT $COUNT"
+done > "$FORMAT_TMP"
 
 # ── Write catalog.md ─────────────────────────────────────────────────────────
 
@@ -133,8 +157,6 @@ done
     echo ""
     echo "Auto-generated by \`/wiki catalog\`. Total: **$TOTAL** documents (**$TOTAL_INGESTED** ingested, **$TOTAL_PENDING** pending)."
     echo ""
-
-    # Summary by format
     echo "## Summary"
     echo ""
     echo "| Format | Count |"
@@ -143,8 +165,6 @@ done
         echo "| $fmt | $count |"
     done < "$FORMAT_TMP"
     echo ""
-
-    # Full table
     echo "## All Sources"
     echo ""
     echo "| Title | Format | Size | Status | Filename |"
