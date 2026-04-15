@@ -499,8 +499,10 @@ fi
 # ── Check / install QMD (semantic search) ────────────────────────────────────
 
 echo ""
+QMD_INSTALLED=false
 if command -v qmd &>/dev/null; then
     echo "[OK] QMD detected — semantic search enabled"
+    QMD_INSTALLED=true
     # Register wiki pages collection if not already
     if ! qmd collections list 2>/dev/null | grep -q "wiki"; then
         echo "  Registering wiki pages with QMD..."
@@ -514,11 +516,11 @@ else
         echo "  Installing QMD..."
         if command -v npm &>/dev/null; then
             npm install -g qmd 2>&1 | tail -3 && {
+                QMD_INSTALLED=true
                 echo "  [OK] QMD installed"
                 echo "  Registering wiki pages..."
                 qmd add "$PAGES_DIR" --name wiki 2>/dev/null || qmd add "$PAGES_DIR" 2>/dev/null || true
                 echo "  [OK] wiki collection registered"
-                echo "  Run '/wiki reindex' after ingesting pages to build the search index."
             } || echo "  [!!] QMD install failed. Install manually: npm install -g qmd"
         else
             echo "  No npm found. Install manually: npm install -g qmd"
@@ -527,6 +529,27 @@ else
         echo "  Skipping — search will use grep fallback."
         echo "  Install later: npm install -g qmd"
     fi
+fi
+
+if [ "$QMD_INSTALLED" = true ]; then
+    echo ""
+    echo "  QMD models (auto-downloaded on first use):"
+    echo "    Embedding:       embeddinggemma-300M (~300MB)"
+    echo "    Reranker:        qwen3-reranker-0.6B (~640MB)"
+    echo "    Query expansion: qmd-query-expansion-1.7B (~1.1GB)"
+    echo "    Total: ~2GB — downloaded once to ~/.cache/qmd/models/"
+    echo ""
+    EMBED_MODEL="${QMD_EMBED_MODEL:-}"
+    if [ -n "$EMBED_MODEL" ]; then
+        echo "  Embedding model override: $EMBED_MODEL"
+    else
+        echo "  For CJK + English papers, set a multilingual embedding model:"
+        echo "    export QMD_EMBED_MODEL=\"hf:Qwen/Qwen3-Embedding-0.6B-GGUF/Qwen3-Embedding-0.6B-Q8_0.gguf\""
+        echo "    (add to ~/.zshrc for persistence)"
+    fi
+    echo ""
+    echo "  First /wiki reindex or /wiki query will be slow (model download)."
+    echo "  Subsequent runs are fast (models cached locally)."
 fi
 
 # ── Summary ──────────────────────────────────────────────────────────────────

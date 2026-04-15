@@ -51,6 +51,21 @@ if ! qmd collections list 2>/dev/null | grep -q "wiki"; then
     qmd add "$PAGES_DIR" --name wiki 2>/dev/null || qmd add "$PAGES_DIR" 2>/dev/null
 fi
 
+# ── Check if first run (models not yet downloaded) ──────────────────────────
+
+MODELS_DIR="$HOME/.cache/qmd/models"
+if [ ! -d "$MODELS_DIR" ] || [ -z "$(ls -A "$MODELS_DIR" 2>/dev/null)" ]; then
+    echo "" >&2
+    echo "First run — QMD will download models (~2GB total):" >&2
+    EMBED_MODEL="${QMD_EMBED_MODEL:-embeddinggemma-300M}"
+    echo "  Embedding: $EMBED_MODEL" >&2
+    echo "  Reranker:  qwen3-reranker-0.6B (~640MB)" >&2
+    echo "  Query expansion: qmd-query-expansion-1.7B (~1.1GB)" >&2
+    echo "  Cached to: $MODELS_DIR" >&2
+    echo "This will take a few minutes. Subsequent runs are fast." >&2
+    echo "" >&2
+fi
+
 # ── Update index ─────────────────────────────────────────────────────────────
 
 echo "Scanning for new/changed files..." >&2
@@ -75,6 +90,8 @@ STATS=$(qmd status --format json 2>/dev/null || echo '{}')
 DOC_COUNT=$(echo "$STATS" | jq -r '.documents // .docs // 0' 2>/dev/null || echo "0")
 CHUNK_COUNT=$(echo "$STATS" | jq -r '.chunks // 0' 2>/dev/null || echo "0")
 
+CURRENT_EMBED_MODEL="${QMD_EMBED_MODEL:-embeddinggemma-300M (default)}"
+
 jq -n \
     --arg action "reindex" \
     --arg status "complete" \
@@ -82,6 +99,7 @@ jq -n \
     --arg embedded "$EMBEDDED" \
     --arg doc_count "$DOC_COUNT" \
     --arg chunk_count "$CHUNK_COUNT" \
+    --arg embed_model "$CURRENT_EMBED_MODEL" \
     '{
         action: $action,
         status: $status,
@@ -89,5 +107,6 @@ jq -n \
         embedded: $embedded,
         documents: $doc_count,
         chunks: $chunk_count,
-        message: ("Reindex complete. " + $doc_count + " documents, " + $chunk_count + " chunks indexed.")
+        embed_model: $embed_model,
+        message: ("Reindex complete. " + $doc_count + " documents, " + $chunk_count + " chunks indexed. Embedding model: " + $embed_model)
     }'
