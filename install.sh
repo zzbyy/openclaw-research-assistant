@@ -11,6 +11,11 @@ set -e
 
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+# ── Ensure PATH includes common tool locations (curl|bash misses .zshrc) ────
+for p in "$HOME/.bun/bin" "$HOME/.local/bin" "$HOME/.npm-global/bin" "/opt/homebrew/bin" "/usr/local/bin"; do
+    [ -d "$p" ] && [[ ":$PATH:" != *":$p:"* ]] && export PATH="$p:$PATH"
+done
+
 # ── Ensure interactive stdin (for curl | bash) ──────────────────────────────
 if [[ ! -t 0 ]]; then
     if [[ -e /dev/tty ]]; then
