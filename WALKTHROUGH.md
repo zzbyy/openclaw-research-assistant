@@ -62,8 +62,6 @@ cp ~/articles/*.md <vault>/sources/markdown/
 cp ~/books/*.epub <vault>/sources/epub/
 ```
 
-You can also use `/wiki ingest <path>` to add a single file — it copies it to the right subdirectory automatically.
-
 ---
 
 ## 5. Build the Wiki
@@ -133,6 +131,8 @@ This extracts all PDFs first (takes minutes, free), then feeds entries to the ag
 ...
 [Wiki] Complete: 1688 absorbed, 3 failed, 0 remaining.
 ```
+
+You can also use `/wiki ingest <path>` to add a single file — it copies it to the right subdirectory automatically.
 
 ### After ingestion
 
