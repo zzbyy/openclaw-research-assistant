@@ -98,6 +98,7 @@ if [ "$WIKI_BACKEND" = "cc" ]; then
 
     # Build the ingest prompt
     PROMPT="Ingest this source document into the wiki. Follow the wiki schema in .schema.md.
+If Obsidian skills are available, use them for creating and editing markdown files.
 
 Source file: ${REL_SOURCE}
 Filename: ${FILENAME}

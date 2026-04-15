@@ -51,6 +51,7 @@ if [ "$WIKI_BACKEND" = "cc" ]; then
     STALE_DAYS="$(_wiki_config '.confidence.stale_after_days')"
 
     PROMPT="Lint the wiki — perform a full health check. Follow the wiki schema in .schema.md.
+If Obsidian skills are available, use them for reading and editing markdown files.
 
 Instructions:
 1. Contradiction scan: find pages with conflicting claims

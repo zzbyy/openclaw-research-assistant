@@ -59,6 +59,7 @@ if [ "$WIKI_BACKEND" = "cc" ]; then
     fi
 
     PROMPT="Query the wiki to answer this question. Follow the wiki schema in .schema.md.
+If Obsidian skills are available, use them for reading and editing markdown files.
 
 Question: ${QUESTION}
 

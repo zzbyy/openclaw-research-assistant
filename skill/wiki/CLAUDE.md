@@ -62,6 +62,19 @@ Default backend is in config (`default_backend`). Override with `--backend` flag
 
 When you escalate, tell the user: "This needs deeper processing — dispatching to Claude Code."
 
+## Obsidian Skills
+
+If `openclaw-obsidian-skills` is installed (check your global skills), use it when
+reading or writing markdown files in the wiki vault. This ensures proper Obsidian
+formatting (wikilinks, callouts, frontmatter, tags).
+
+## After Init / Batch
+
+When `/wiki init` or `/wiki batch` completes, the dispatch count shows how many tasks
+were **sent** to Claude Code — not how many are finished. Claude Code processes them
+in the background. Always run `/wiki status` afterwards to show the user the **current**
+page count, not the stale count from the dispatch output.
+
 ## Handling Queries Directly
 
 When you handle a query yourself (Mode B):
