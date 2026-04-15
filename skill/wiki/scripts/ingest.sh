@@ -129,7 +129,8 @@ Instructions:
 
     # Reindex picks up pages from previous ingests
     if command -v qmd &>/dev/null; then
-        "$SCRIPT_DIR/reindex.sh" >/dev/null 2>&1 || true
+        echo "Reindexing search..." >&2
+        "$SCRIPT_DIR/reindex.sh" >&2 || true
     fi
 
 else
@@ -153,6 +154,7 @@ else
 
     # Auto-reindex after agent creates pages
     if command -v qmd &>/dev/null; then
-        "$SCRIPT_DIR/reindex.sh" >/dev/null 2>&1 || true
+        echo "Reindexing search..." >&2
+        "$SCRIPT_DIR/reindex.sh" >&2 || true
     fi
 fi

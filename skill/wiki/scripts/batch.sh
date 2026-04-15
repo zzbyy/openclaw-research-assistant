@@ -163,15 +163,21 @@ for ((i=0; i<BATCH_SIZE; i++)); do
     INGEST_ARGS=("$file")
     [ -n "$TOPIC" ] && INGEST_ARGS+=(--topic "$TOPIC")
 
-    # Dispatch via ingest.sh
-    if "$SCRIPT_DIR/ingest.sh" "${INGEST_ARGS[@]}" >/dev/null 2>&1; then
-        # Track in .ingested manifest
+    # Dispatch via ingest.sh (capture output for progress)
+    INGEST_OUT=$("$SCRIPT_DIR/ingest.sh" "${INGEST_ARGS[@]}" 2>&1) && {
         echo "$FILENAME" >> "$INGESTED_FILE"
         DISPATCHED=$((DISPATCHED + 1))
-    else
+        # Extract task_id if cc-bridge dispatch
+        TASK_ID=$(echo "$INGEST_OUT" | jq -r '.task_id // empty' 2>/dev/null || true)
+        if [ -n "$TASK_ID" ]; then
+            echo "  -> dispatched (task: $TASK_ID)" >&2
+        else
+            echo "  -> done" >&2
+        fi
+    } || {
         echo "  [!!] Failed: $FILENAME" >&2
         FAILED=$((FAILED + 1))
-    fi
+    }
 done
 
 REMAINING=$((TOTAL_PENDING - BATCH_SIZE))
@@ -180,8 +186,10 @@ REMAINING=$((TOTAL_PENDING - BATCH_SIZE))
 
 REINDEXED=false
 if command -v qmd &>/dev/null && [ "$DISPATCHED" -gt 0 ]; then
-    echo "Reindexing search..." >&2
-    "$SCRIPT_DIR/reindex.sh" >/dev/null 2>&1 && REINDEXED=true || true
+    echo "Reindexing search index..." >&2
+    REINDEX_OUT=$("$SCRIPT_DIR/reindex.sh" 2>&1) && REINDEXED=true || true
+    REINDEX_MSG=$(echo "$REINDEX_OUT" | jq -r '.message // empty' 2>/dev/null || true)
+    [ -n "$REINDEX_MSG" ] && echo "  $REINDEX_MSG" >&2
 fi
 
 # ── Output ───────────────────────────────────────────────────────────────────

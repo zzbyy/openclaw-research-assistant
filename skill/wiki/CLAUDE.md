@@ -68,12 +68,32 @@ If `openclaw-obsidian-skills` is installed (check your global skills), use it wh
 reading or writing markdown files in the wiki vault. This ensures proper Obsidian
 formatting (wikilinks, callouts, frontmatter, tags).
 
-## After Init / Batch
+## Progress Reporting
 
-When `/wiki init` or `/wiki batch` completes, the dispatch count shows how many tasks
-were **sent** to Claude Code — not how many are finished. Claude Code processes them
-in the background. Always run `/wiki status` afterwards to show the user the **current**
-page count, not the stale count from the dispatch output.
+**You MUST relay all progress to the user in real time.** Don't wait for a command to
+finish before telling the user what's happening. When running wiki commands:
+
+1. **Before running**: tell the user what you're about to do
+2. **During execution**: relay stderr output as it comes (e.g., "[3/15] Ingesting: paper.pdf")
+3. **After completion**: summarize the result from the JSON output
+4. **For cc-backend tasks**: tell the user that Claude Code is processing in the background
+   and they'll get notifications via cc-bridge hooks as pages are created
+
+### After Init / Batch
+
+The dispatch count shows how many tasks were **sent** to Claude Code — not how many
+are finished. Claude Code processes them in the background.
+
+- Always run `/wiki status` afterwards to show the user the **current** page count
+- If cc-backend: tell the user "Pages are being created by Claude Code. You'll get
+  notifications as each task completes."
+- Report the reindex result (which model, how many documents indexed)
+
+### After Reindex
+
+Tell the user which embedding model is active and how many documents/chunks were indexed.
+If it's the default model and the user has CJK papers, suggest the multilingual model:
+`export QMD_EMBED_MODEL="hf:Qwen/Qwen3-Embedding-0.6B-GGUF/Qwen3-Embedding-0.6B-Q8_0.gguf"`
 
 ## Handling Queries Directly
 
