@@ -89,12 +89,14 @@ if [ -f "$CONFIG_FILE" ]; then
     if [ -d "$WIKI_DIR" ]; then
         echo "" >&2
         echo "Updating wiki schema..." >&2
-        if ! diff -q "$REPO_DIR/wiki-schema/CLAUDE.md" "$WIKI_DIR/CLAUDE.md" >/dev/null 2>&1; then
-            cp "$REPO_DIR/wiki-schema/CLAUDE.md" "$WIKI_DIR/CLAUDE.md"
+        if ! diff -q "$REPO_DIR/wiki-schema/.schema.md" "$WIKI_DIR/.schema.md" >/dev/null 2>&1; then
+            cp "$REPO_DIR/wiki-schema/.schema.md" "$WIKI_DIR/.schema.md"
+            # Clean up old CLAUDE.md if it exists
+            [ -f "$WIKI_DIR/CLAUDE.md" ] && rm -f "$WIKI_DIR/CLAUDE.md" && echo "  [OK] removed old wiki/CLAUDE.md" >&2
             UPDATED=$((UPDATED + 1))
-            echo "  [OK] wiki/CLAUDE.md updated" >&2
+            echo "  [OK] wiki/.schema.md updated" >&2
         else
-            echo "  [--] wiki/CLAUDE.md unchanged" >&2
+            echo "  [--] wiki/.schema.md unchanged" >&2
         fi
         echo "  [--] wiki/index.md preserved" >&2
         echo "  [--] wiki/log.md preserved" >&2

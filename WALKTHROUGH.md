@@ -27,7 +27,7 @@ Check the skill is installed and the vault structure looks right:
 openclaw skills info wiki
 
 # Your vault should have this structure:
-ls <your-vault>/wiki/          # CLAUDE.md, index.md, log.md, pages/
+ls <your-vault>/wiki/          # index.md, log.md, pages/ (.schema.md is hidden)
 ls <your-vault>/sources/       # pdfs/, html/, epub/, markdown/
 ```
 
@@ -48,7 +48,7 @@ If you have a large collection of papers, don't ingest them all at once. Use the
 ```
 /wiki catalog
 ```
-Scans everything in `sources/` and creates `wiki/catalog.md` — a table of all documents with title, format, size, and ingestion status. No LLM calls, runs instantly.
+Scans everything in `sources/` and creates `wiki/.catalog.json` — a compact JSON index of all documents with filename, format, size, and ingestion status. No LLM calls, hidden from Obsidian.
 
 ### Step 2: Initialize the wiki
 ```

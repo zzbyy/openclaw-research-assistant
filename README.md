@@ -103,7 +103,7 @@ Obsidian Vault/
 │   ├── epub/
 │   └── markdown/
 ├── wiki/             ← LLM-generated pages
-│   ├── CLAUDE.md     ← Schema (conventions, operations)
+│   ├── .schema.md    ← Schema (hidden from Obsidian)
 │   ├── index.md      ← Category catalog
 │   ├── log.md        ← Operation log
 │   └── pages/        ← Wiki articles
@@ -168,7 +168,7 @@ Config lives at `~/.openclaw/wiki/config.json`:
 | Skill | `~/.agents/skills/wiki/` or `<agent-workspace>/skills/wiki/` |
 | Config | `<skill-dir>/config.json` (lives alongside the skill) |
 | Wiki pages | `<vault>/wiki/pages/` |
-| Schema | `<vault>/wiki/CLAUDE.md` |
+| Schema | `<vault>/wiki/.schema.md` (hidden from Obsidian) |
 | Sources | `<vault>/sources/` |
 | Index | `<vault>/wiki/index.md` |
 | Log | `<vault>/wiki/log.md` |

@@ -120,12 +120,14 @@ if [ -n "$EXISTING_INSTALL" ] || [ "$FORCE_UPGRADE" = true ]; then
     echo "  [OK] CLAUDE.md"
     echo "  [OK] scripts/ ($(ls "$SKILL_DEST/scripts/"*.sh 2>/dev/null | wc -l | tr -d ' ') files)"
 
-    # Update vault schema (CLAUDE.md only — index.md and log.md are user data)
+    # Update vault schema (.schema.md only — index.md and log.md are user data)
     echo ""
     echo "Updating wiki schema..."
     if [ -d "$WIKI_DIR" ]; then
-        cp "$REPO_DIR/wiki-schema/CLAUDE.md" "$WIKI_DIR/CLAUDE.md"
-        echo "  [OK] wiki/CLAUDE.md (schema updated)"
+        cp "$REPO_DIR/wiki-schema/.schema.md" "$WIKI_DIR/.schema.md"
+        # Clean up old CLAUDE.md if it exists
+        [ -f "$WIKI_DIR/CLAUDE.md" ] && rm -f "$WIKI_DIR/CLAUDE.md" && echo "  [OK] removed old wiki/CLAUDE.md"
+        echo "  [OK] wiki/.schema.md (schema updated)"
         echo "  [--] wiki/index.md (preserved)"
         echo "  [--] wiki/log.md (preserved)"
     else
@@ -393,7 +395,7 @@ install_if_missing() {
     fi
 }
 
-install_if_missing "$REPO_DIR/wiki-schema/CLAUDE.md" "$WIKI_DIR/CLAUDE.md"
+install_if_missing "$REPO_DIR/wiki-schema/.schema.md" "$WIKI_DIR/.schema.md"
 install_if_missing "$REPO_DIR/wiki-schema/index.md" "$WIKI_DIR/index.md"
 install_if_missing "$REPO_DIR/wiki-schema/log.md" "$WIKI_DIR/log.md"
 

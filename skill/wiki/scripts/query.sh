@@ -55,7 +55,7 @@ if [ "$WIKI_BACKEND" = "cc" ]; then
         exit 1
     fi
 
-    PROMPT="Query the wiki to answer this question. Follow the wiki schema in CLAUDE.md.
+    PROMPT="Query the wiki to answer this question. Follow the wiki schema in .schema.md.
 
 Question: ${QUESTION}
 

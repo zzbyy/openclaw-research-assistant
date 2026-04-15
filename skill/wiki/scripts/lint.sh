@@ -47,7 +47,7 @@ if [ "$WIKI_BACKEND" = "cc" ]; then
 
     STALE_DAYS="$(_wiki_config '.confidence.stale_after_days')"
 
-    PROMPT="Lint the wiki — perform a full health check. Follow the wiki schema in CLAUDE.md.
+    PROMPT="Lint the wiki — perform a full health check. Follow the wiki schema in .schema.md.
 
 Instructions:
 1. Contradiction scan: find pages with conflicting claims
