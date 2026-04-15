@@ -11,10 +11,10 @@ curl -sSL https://raw.githubusercontent.com/zzbyy/openclaw-research-assistant/ma
 ```
 
 The installer asks two questions:
-- **Where to install**: globally or into a specific agent's workspace
+- **Where to install**: globally or into a specific agent's workspace (lists agents from `openclaw.json`)
 - **Obsidian vault path**: where your wiki and source files will live
 
-It then sets up the vault structure, installs the skill, writes the config, and optionally installs Claude Code and cc-bridge if missing.
+It then sets up the vault structure, installs the skill, writes the config, and optionally installs Claude Code, cc-bridge, and QMD if missing.
 
 ---
 
@@ -23,9 +23,6 @@ It then sets up the vault structure, installs the skill, writes the config, and 
 Check the skill is installed and the vault structure looks right:
 
 ```bash
-# Should show wiki skill info
-openclaw skills info wiki
-
 # Your vault should have this structure:
 ls <your-vault>/wiki/          # index.md, log.md, pages/ (.schema.md is hidden)
 ls <your-vault>/sources/       # pdfs/, html/, epub/, markdown/
@@ -36,35 +33,63 @@ Quick smoke test from Feishu:
 /wiki status
 ```
 
-You should get back a JSON summary showing 0 pages, 0 sources — an empty wiki ready to go.
+You should get back a summary showing 0 pages, 0 sources — an empty wiki ready to go.
 
 ---
 
-## 3. First-Time Initialization (Thousands of Papers)
+## 3. Set Up Semantic Search (Optional but Recommended)
+
+Install [QMD](https://github.com/tobi/qmd) for hybrid search (BM25 + vector + LLM reranker). Fully local, no API keys needed.
+
+```bash
+npm install -g qmd
+```
+
+Register your wiki pages:
+```bash
+qmd add <your-vault>/wiki/pages --name wiki
+```
+
+For CJK + English papers, use a multilingual embedding model:
+```bash
+echo 'export QMD_EMBED_MODEL="hf:Qwen/Qwen3-Embedding-0.6B-GGUF/Qwen3-Embedding-0.6B-Q8_0.gguf"' >> ~/.zshrc
+source ~/.zshrc
+```
+
+Models auto-download on first use (~2GB total). Without QMD, search falls back to keyword grep.
+
+---
+
+## 4. First-Time Initialization (Large Collections)
 
 If you have a large collection of papers, don't ingest them all at once. Use the initialization workflow:
 
-### Step 1: Catalog your sources
+### Step 1: Drop source files into your vault
+Copy your PDFs, EPUBs, HTML, or markdown files into `<vault>/sources/pdfs/` (or the appropriate format subdirectory).
+
+### Step 2: Catalog your sources
 ```
 /wiki catalog
 ```
 Scans everything in `sources/` and creates `wiki/.catalog.json` — a compact JSON index of all documents with filename, format, size, and ingestion status. No LLM calls, hidden from Obsidian.
 
-### Step 2: Initialize the wiki
+Use `--quick` for counts only (instant, even with thousands of files):
+```
+/wiki catalog --quick
+```
+
+### Step 3: Initialize the wiki
 ```
 /wiki init
 ```
-Guided initialization:
-1. Runs catalog automatically
-2. Picks the top 15 largest PDFs as foundational papers (larger = usually more comprehensive)
-3. Dispatches them for ingestion
+Counts sources, then dispatches the first 15 pending files for ingestion.
 
-Or specify how many:
 ```
-/wiki init --auto 20     # pick top 20
+/wiki init --limit 30         # ingest first 30 instead
+/wiki init --format pdfs      # only PDFs
 ```
 
-### Step 3: Continue with batches
+### Step 4: Continue with batches
 After the initial seed, ingest more in controlled batches:
 ```
 /wiki batch --limit 10                      # next 10 pending files
@@ -73,12 +98,14 @@ After the initial seed, ingest more in controlled batches:
 /wiki batch --dry-run                       # preview without ingesting
 ```
 
-### Step 4: Let queries guide priorities
+Search index updates automatically after each batch (incremental, fast).
+
+### Step 5: Let queries guide priorities
 Use `/wiki query` to ask questions. When the wiki can't answer, that tells you what to ingest next.
 
 ---
 
-## 4. Ingest a Single Paper
+## 5. Ingest a Single Paper
 
 Drop a specific PDF into the wiki:
 
@@ -96,7 +123,8 @@ What happens behind the scenes:
    - Source citations
 4. `index.md` is updated with new entries
 5. `log.md` gets an append-only record
-6. You get a notification in Feishu when done
+6. Search index is updated (if QMD installed)
+7. You get a notification in Feishu when done
 
 Open Obsidian — you should see new pages in `wiki/pages/`, linked in the graph view.
 
@@ -127,7 +155,7 @@ Add `--backend cc` or `--backend agent` to any command:
 
 ---
 
-## 5. Query the Wiki
+## 6. Query the Wiki
 
 Ask questions about what you've ingested:
 
@@ -140,6 +168,8 @@ The answer comes back with:
 - Confidence levels noted (e.g., "self-attention (high confidence) enables...")
 - Gaps identified if the wiki doesn't cover something yet
 
+When QMD is installed, queries use hybrid semantic search (BM25 + vector + LLM reranker) to find the most relevant pages — even when exact keywords don't match.
+
 ### Conversational mode
 
 You don't need `/wiki query` for everything. Just talk naturally to the research agent in Feishu:
@@ -150,11 +180,16 @@ The agent reads the relevant wiki pages and synthesizes an answer. No command ne
 
 ---
 
-## 6. Search & Browse
+## 7. Search & Browse
 
 Find pages by keyword:
 ```
 /wiki search attention
+```
+
+For semantic search (finds conceptual matches, not just exact keywords):
+```
+/wiki search "manufacturing challenges" --semantic
 ```
 
 Returns matching pages with titles, types, confidence levels, and content snippets.
@@ -175,7 +210,7 @@ Shows all typed relationships: what it depends on, what uses it, what it superse
 
 ---
 
-## 7. Lint — Keep the Wiki Healthy
+## 8. Lint — Keep the Wiki Healthy
 
 Run a health check:
 ```
@@ -201,7 +236,7 @@ When you ingest a new paper that contradicts existing knowledge, the wiki doesn'
 
 ---
 
-## 8. Obsidian Integration
+## 9. Obsidian Integration
 
 Your wiki is native Obsidian markdown. Everything works out of the box:
 
@@ -209,6 +244,8 @@ Your wiki is native Obsidian markdown. Everything works out of the box:
 - **Wikilinks** — `[[page-name]]` links work throughout
 - **Tags** — `#topic/subtopic` tags are browsable
 - **Frontmatter** — visible in reading view and properties panel
+
+If Obsidian skills are installed (in Claude Code or OpenClaw), the wiki uses them for proper Obsidian formatting when creating pages.
 
 ### Dataview queries
 
@@ -235,7 +272,7 @@ WHERE status = "stale"
 
 ---
 
-## 9. Scheduled Automation (Optional)
+## 10. Scheduled Automation (Optional)
 
 Set up periodic jobs via OpenClaw cron:
 
@@ -261,7 +298,23 @@ Results are sent to your Feishu channel as notifications.
 
 ---
 
-## 10. Configuration
+## 11. Search Index Management
+
+If QMD is installed, the search index updates automatically after ingest/batch. You can also manage it manually:
+
+```
+/wiki reindex              # incremental — only new/changed pages
+/wiki reindex --full       # full re-embed (after model change)
+```
+
+To check QMD status:
+```bash
+qmd status
+```
+
+---
+
+## 12. Configuration
 
 View or update settings:
 ```
@@ -275,10 +328,10 @@ Config lives alongside the skill in the agent's workspace (`config.json`).
 
 ---
 
-## 11. Building Your Wiki — Tips
+## 13. Building Your Wiki — Tips
 
 ### Start with a handful of foundational papers
-Don't ingest everything at once. Start with 5-10 core papers in your area. Let the wiki build a strong foundation of cross-referenced concepts, then add more incrementally.
+Don't ingest everything at once. Start with 15-30 core papers in your area. Let the wiki build a strong foundation of cross-referenced concepts, then add more incrementally via `/wiki batch`.
 
 ### Review the first few ingestions in Obsidian
 After your first few ingests, open the wiki in Obsidian. Check that:
@@ -301,7 +354,7 @@ Don't resolve every contradiction immediately. Let them build up, then review th
 
 ---
 
-## 12. Troubleshooting
+## 14. Troubleshooting
 
 **No response from `/wiki` commands?**
 ```bash
@@ -324,13 +377,24 @@ Verify vault_path points to your actual Obsidian vault.
 **Pages not showing in Obsidian?**
 Make sure your Obsidian vault path matches the `vault_path` in config. The wiki pages live at `<vault>/wiki/pages/`.
 
+**Search not finding pages?**
+```
+/wiki reindex           # rebuild the search index
+qmd status              # check QMD health
+```
+
 ---
 
-## 13. Updating
+## 15. Upgrading
 
-Re-run the installer — it's idempotent:
+From Feishu (no terminal needed):
+```
+/wiki upgrade
+```
+
+Or from terminal:
 ```bash
 curl -sSL https://raw.githubusercontent.com/zzbyy/openclaw-research-assistant/main/remote-install.sh | bash
 ```
 
-Existing wiki pages, sources, and config are preserved. Only the skill scripts and schema are updated.
+Both are idempotent — config, wiki pages, sources, and search index are preserved. Only skill scripts and schema are updated.
