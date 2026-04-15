@@ -377,11 +377,12 @@ WIKI_DIR="$VAULT_PATH/wiki"
 SOURCES_DIR="$VAULT_PATH/sources"
 
 echo "Creating wiki directories..."
-mkdir -p "$WIKI_DIR"/{concepts,methods,papers,people,books,domains,tools,datasets,techniques,.entries}
+mkdir -p "$WIKI_DIR/.entries"
 mkdir -p "$SOURCES_DIR"/{pdfs,html,epub,markdown}
-echo "  [OK] $WIKI_DIR/ (with type subdirectories)"
+echo "  [OK] $WIKI_DIR/"
 echo "  [OK] $WIKI_DIR/.entries/ (for extracted text)"
 echo "  [OK] $SOURCES_DIR/{pdfs,html,epub,markdown}/"
+echo "  Type subdirectories (concepts/, books/, etc.) created dynamically during ingestion."
 
 # ── Install schema files ────────────────────────────────────────────────────
 
