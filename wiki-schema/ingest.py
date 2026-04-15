@@ -209,22 +209,19 @@ def extract_markdown(filepath: Path) -> tuple:
 
 # ── Main ────────────────────────────────────────────────────────────────────
 
+# Only extract binary/complex formats that need text extraction.
+# Markdown, text, and HTML files are already readable — they go directly
+# into .entries/ as-is (or are read directly by the LLM).
 EXTRACTORS = {
     ".epub": ("epub", extract_epub),
     ".pdf": ("pdf", extract_pdf),
     ".mobi": ("mobi", extract_mobi),
-    ".html": ("html", extract_html),
-    ".htm": ("html", extract_html),
-    ".md": ("markdown", extract_markdown),
-    ".txt": ("markdown", extract_markdown),
 }
 
 FORMAT_DIRS = {
     "epub": "epub",
     "pdf": "pdfs",
     "mobi": "epub",  # treated same as epub
-    "html": "html",
-    "markdown": "markdown",
 }
 
 

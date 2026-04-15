@@ -101,6 +101,8 @@ fi
 
 find_pending_entries() {
     local pending=()
+
+    # 1. Extracted entries in .entries/ (from PDF/EPUB/MOBI extraction)
     for entry in "$ENTRIES_DIR"/*.md; do
         [ -f "$entry" ] || continue
         ENTRY_NAME="$(basename "$entry")"
@@ -115,6 +117,27 @@ find_pending_entries() {
 
         pending+=("$entry")
     done
+
+    # 2. Markdown/HTML/text source files (readable directly, no extraction needed)
+    for subdir in markdown html; do
+        local srcdir="$WIKI_SOURCES_PATH/$subdir"
+        [ -d "$srcdir" ] || continue
+        for srcfile in "$srcdir"/*.md "$srcdir"/*.txt "$srcdir"/*.html "$srcdir"/*.htm; do
+            [ -f "$srcfile" ] || continue
+            local srcname="source_$(basename "$srcfile")"
+
+            # Skip if already absorbed
+            grep -qxF "$srcname" "$ABSORBED_FILE" 2>/dev/null && continue
+
+            # Apply match pattern
+            if [ -n "$MATCH_PATTERN" ]; then
+                echo "$srcname" | grep -qi "$MATCH_PATTERN" 2>/dev/null || continue
+            fi
+
+            pending+=("$srcfile")
+        done
+    done
+
     echo "${pending[@]}"
 }
 
@@ -191,17 +214,27 @@ absorb_batch() {
         ENTRY_NAME="$(basename "$entry")"
         ENTRY_IDX=$((i - batch_start + 1))
 
+        # Determine entry path relative to wiki dir
+        # Extracted entries are in .entries/, direct sources are in ../sources/
+        if [[ "$entry" == "$ENTRIES_DIR"/* ]]; then
+            ENTRY_REF=".entries/${ENTRY_NAME}"
+            ABSORB_NAME="$ENTRY_NAME"
+        else
+            ENTRY_REF="../sources/$(basename "$(dirname "$entry")")/${ENTRY_NAME}"
+            ABSORB_NAME="source_${ENTRY_NAME}"
+        fi
+
         echo "  [$ENTRY_IDX/$batch_size] Absorbing: $ENTRY_NAME" >&2
 
-        if [ "$WIKI_BACKEND" = "cc" ] && [ -f "$DISPATCH_PATH" ]; then
+        if [ "$WIKI_BACKEND" = "cc" ] && [ -n "$DISPATCH_PATH" ] && [ -f "$DISPATCH_PATH" ]; then
             # CC backend: dispatch to Claude Code
-            PROMPT="Absorb this pre-extracted entry into the wiki. Follow the wiki schema in .schema.md.
+            PROMPT="Absorb this entry into the wiki. Follow the wiki schema in .schema.md.
 If Obsidian skills are available, use them for creating and editing markdown files.
 
-Entry file: .entries/${ENTRY_NAME}
+Entry file: ${ENTRY_REF}
 
 Instructions:
-1. Read the entry from .entries/${ENTRY_NAME}
+1. Read the entry from ${ENTRY_REF}
 2. Scan index.md to understand current wiki state
 3. Identify key concepts, methods, people, techniques
 4. Create pages in appropriate type subdirectories (create dirs as needed)
@@ -216,18 +249,18 @@ Instructions:
             [ -n "$CC_TIMEOUT" ] && DISPATCH_ARGS+=(--timeout "$CC_TIMEOUT")
             [ -n "$TOPIC" ] && DISPATCH_ARGS+=(--topic "$TOPIC")
 
-            if "$DISPATCH_PATH" "${DISPATCH_ARGS[@]}" -- "$PROMPT" >/dev/null 2>&1; then
-                echo "$ENTRY_NAME" >> "$ABSORBED_FILE"
+            DISPATCH_OUT=$("$DISPATCH_PATH" "${DISPATCH_ARGS[@]}" -- "$PROMPT" 2>&1) && {
+                echo "$ABSORB_NAME" >> "$ABSORBED_FILE"
                 dispatched=$((dispatched + 1))
-                TASK_ID=$("$DISPATCH_PATH" "${DISPATCH_ARGS[@]}" -- "$PROMPT" 2>/dev/null | jq -r '.task_id // empty' 2>/dev/null || true)
-                echo "    -> dispatched" >&2
-            else
+                TASK_ID=$(echo "$DISPATCH_OUT" | jq -r '.task_id // empty' 2>/dev/null || true)
+                [ -n "$TASK_ID" ] && echo "    -> dispatched (task: $TASK_ID)" >&2 || echo "    -> dispatched" >&2
+            } || {
                 echo "    [!!] Failed" >&2
                 failed=$((failed + 1))
-            fi
+            }
         else
-            # Agent backend: return entry info for the agent to process
-            echo "$ENTRY_NAME" >> "$ABSORBED_FILE"
+            # Agent backend: mark as queued, agent processes from the output JSON
+            echo "$ABSORB_NAME" >> "$ABSORBED_FILE"
             dispatched=$((dispatched + 1))
             echo "    -> queued for agent" >&2
         fi
