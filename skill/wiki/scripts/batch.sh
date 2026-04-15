@@ -9,6 +9,7 @@ set -e
 
 # Bootstrap: resolve config if not called via wiki-entry.sh
 source "$(dirname "${BASH_SOURCE[0]}")/_bootstrap.sh"
+source "$(dirname "${BASH_SOURCE[0]}")/_notify.sh"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
@@ -151,6 +152,8 @@ fi
 
 # ── Dispatch batch ───────────────────────────────────────────────────────────
 
+wiki_notify "[Wiki Batch] Starting: $BATCH_SIZE files to process..."
+
 DISPATCHED=0
 FAILED=0
 
@@ -179,6 +182,11 @@ for ((i=0; i<BATCH_SIZE; i++)); do
         echo "  [!!] Failed: $FILENAME" >&2
         FAILED=$((FAILED + 1))
     }
+
+    # Send progress notification at intervals
+    if should_notify_progress "$((i+1))"; then
+        wiki_notify "[Wiki Batch] $((i+1))/$BATCH_SIZE dispatched ($FAILED failed)..."
+    fi
 done
 
 REMAINING=$((TOTAL_PENDING - BATCH_SIZE))
@@ -192,6 +200,13 @@ if command -v qmd &>/dev/null && [ "$DISPATCHED" -gt 0 ]; then
     REINDEX_MSG=$(echo "$REINDEX_OUT" | jq -r '.message // empty' 2>/dev/null || true)
     [ -n "$REINDEX_MSG" ] && echo "  $REINDEX_MSG" >&2
 fi
+
+# ── Completion notification ─────────────────────────────────────────────────
+
+SUMMARY="[Wiki Batch] Complete: $DISPATCHED dispatched, $FAILED failed, $REMAINING remaining."
+[ "$REINDEXED" = true ] && SUMMARY="$SUMMARY Search index updated."
+[ "$WIKI_BACKEND" = "cc" ] && SUMMARY="$SUMMARY Pages creating in background."
+wiki_notify "$SUMMARY"
 
 # ── Output ───────────────────────────────────────────────────────────────────
 

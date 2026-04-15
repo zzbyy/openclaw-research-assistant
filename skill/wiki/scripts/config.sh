@@ -38,6 +38,9 @@ ALLOWED_KEYS=(
     "cron.ingest.backend"
     "confidence.stale_after_days"
     "batch.default_limit"
+    "notifications.channel"
+    "notifications.target"
+    "notifications.progress_interval"
 )
 
 is_allowed_key() {
