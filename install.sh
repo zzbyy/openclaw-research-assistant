@@ -369,14 +369,13 @@ echo ""
 # ── Create vault wiki structure ──────────────────────────────────────────────
 
 WIKI_DIR="$VAULT_PATH/wiki"
-PAGES_DIR="$WIKI_DIR/pages"
 SOURCES_DIR="$VAULT_PATH/sources"
 
 echo "Creating wiki directories..."
-mkdir -p "$PAGES_DIR"
+mkdir -p "$WIKI_DIR"/{concepts,methods,papers,people,books,domains,tools,datasets,techniques,.entries}
 mkdir -p "$SOURCES_DIR"/{pdfs,html,epub,markdown}
-echo "  [OK] $WIKI_DIR/"
-echo "  [OK] $WIKI_DIR/pages/"
+echo "  [OK] $WIKI_DIR/ (with type subdirectories)"
+echo "  [OK] $WIKI_DIR/.entries/ (for extracted text)"
 echo "  [OK] $SOURCES_DIR/{pdfs,html,epub,markdown}/"
 
 # ── Install schema files ────────────────────────────────────────────────────
@@ -398,6 +397,11 @@ install_if_missing() {
 install_if_missing "$REPO_DIR/wiki-schema/.schema.md" "$WIKI_DIR/.schema.md"
 install_if_missing "$REPO_DIR/wiki-schema/index.md" "$WIKI_DIR/index.md"
 install_if_missing "$REPO_DIR/wiki-schema/log.md" "$WIKI_DIR/log.md"
+
+# Install ingest.py (text extraction pipeline)
+cp "$REPO_DIR/wiki-schema/ingest.py" "$WIKI_DIR/ingest.py"
+chmod +x "$WIKI_DIR/ingest.py"
+echo "  [OK] ingest.py (text extraction pipeline)"
 
 # ── Install skill ───────────────────────────────────────────────────────────
 
@@ -503,10 +507,10 @@ QMD_INSTALLED=false
 if command -v qmd &>/dev/null; then
     echo "[OK] QMD detected — semantic search enabled"
     QMD_INSTALLED=true
-    # Register wiki pages collection if not already
+    # Register wiki directory with QMD (includes all type subdirectories)
     if ! qmd collections list 2>/dev/null | grep -q "wiki"; then
-        echo "  Registering wiki pages with QMD..."
-        qmd add "$PAGES_DIR" --name wiki 2>/dev/null || qmd add "$PAGES_DIR" 2>/dev/null || true
+        echo "  Registering wiki with QMD..."
+        qmd add "$WIKI_DIR" --name wiki 2>/dev/null || qmd add "$WIKI_DIR" 2>/dev/null || true
         echo "  [OK] wiki collection registered"
     fi
 else
@@ -518,8 +522,8 @@ else
             npm install -g qmd 2>&1 | tail -3 && {
                 QMD_INSTALLED=true
                 echo "  [OK] QMD installed"
-                echo "  Registering wiki pages..."
-                qmd add "$PAGES_DIR" --name wiki 2>/dev/null || qmd add "$PAGES_DIR" 2>/dev/null || true
+                echo "  Registering wiki with QMD..."
+                qmd add "$WIKI_DIR" --name wiki 2>/dev/null || qmd add "$WIKI_DIR" 2>/dev/null || true
                 echo "  [OK] wiki collection registered"
             } || echo "  [!!] QMD install failed. Install manually: npm install -g qmd"
         else

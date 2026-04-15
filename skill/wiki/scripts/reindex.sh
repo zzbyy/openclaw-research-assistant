@@ -39,16 +39,16 @@ done
 
 # ── Ensure collection exists ─────────────────────────────────────────────────
 
-PAGES_DIR="$WIKI_PATH/pages"
-if [ ! -d "$PAGES_DIR" ]; then
-    jq -n '{"action": "reindex", "status": "skipped", "message": "No pages directory found."}'
+# Check that wiki directory has content (any .md files in subdirectories)
+if [ -z "$(find "$WIKI_PATH" -name '*.md' -not -name '.*' -type f 2>/dev/null | head -1)" ]; then
+    jq -n '{"action": "reindex", "status": "skipped", "message": "No wiki pages found yet."}'
     exit 0
 fi
 
-# Check if wiki collection is registered
+# Check if wiki collection is registered (register the whole wiki dir, covers all type subdirs)
 if ! qmd collections list 2>/dev/null | grep -q "wiki"; then
     echo "Registering wiki collection with QMD..." >&2
-    qmd add "$PAGES_DIR" --name wiki 2>/dev/null || qmd add "$PAGES_DIR" 2>/dev/null
+    qmd add "$WIKI_PATH" --name wiki 2>/dev/null || qmd add "$WIKI_PATH" 2>/dev/null
 fi
 
 # ── Check if first run (models not yet downloaded) ──────────────────────────
