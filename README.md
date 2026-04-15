@@ -33,8 +33,9 @@ Source files (PDF/EPUB/MOBI)          Markdown/HTML/text files
 - **Obsidian-native**: wikilinks, YAML frontmatter, tags, Dataview-compatible
 - **Dynamic type subdirectories**: `concepts/`, `methods/`, `books/`, `people/`, etc. — created as content demands
 - **Contradiction detection**: flags when new sources conflict with existing knowledge
-- **Dual backend**: OpenClaw agent (default, cheaper) or Claude Code (via [cc-bridge](https://github.com/zzbyy/openclaw-cc-bridge), heavier)
-- **Auto-batch mode**: `--auto` processes all sources end-to-end without intervention
+- **Agent-first**: OpenClaw agent handles all batch/query/lint work directly (cheaper, conversational)
+- **Claude Code for deep ingest**: `/wiki ingest <file>` uses Claude Code for single-file deep analysis (optional)
+- **Content dedup**: hashes extracted entries to skip duplicates across batches
 - **Semantic search**: [QMD](https://github.com/tobi/qmd) hybrid search (BM25 + vector + LLM reranker), fully local, no API keys
 - **Progress notifications**: batch progress sent directly to Feishu during processing
 - **Obsidian skills**: uses Obsidian markdown skills when available for proper formatting
@@ -56,23 +57,26 @@ It also offers to install Claude Code, cc-bridge, and QMD if not already present
 
 | Command | What it does |
 |---------|-------------|
-| `/wiki batch [--limit N]` | Extract pending sources + absorb entries into wiki pages |
-| `/wiki batch --auto` | Extract + absorb everything, loop until done |
-| `/wiki init` | Same as batch (alias for first-time use) |
-| `/wiki ingest <path>` | Ingest a single file (extract + absorb) |
-| `/wiki query <question>` | Query the wiki (semantic search via QMD when available) |
-| `/wiki search <term>` | Search wiki pages (keyword or `--semantic` for hybrid) |
-| `/wiki lint` | Health check: contradictions, orphans, broken links |
-| `/wiki status` | Wiki statistics and health overview |
-| `/wiki browse <page>` | Read a specific wiki page |
-| `/wiki related <page>` | Find related pages via typed relationships |
-| `/wiki catalog [--quick]` | Scan sources, build `.catalog.json` |
-| `/wiki reindex [--full]` | Update QMD search index (incremental by default) |
-| `/wiki config [key] [value]` | View or update configuration |
-| `/wiki cron <lint\|ingest> [opts]` | Manage scheduled jobs |
-| `/wiki upgrade` | Pull latest from GitHub and update skill in place |
+| Command | Who does the work | What it does |
+|---------|-------------------|-------------|
+| `/wiki batch [--limit N]` | Script + **agent** | Extract sources → dedup → agent absorbs entries into wiki pages |
+| `/wiki batch --auto` | Script + **agent** | Extract + dedup + agent absorbs everything |
+| `/wiki init` | Script + **agent** | Same as batch (alias for first-time use) |
+| `/wiki ingest <path>` | Script + **Claude Code** | Single file: extract → CC deep analysis (PDF/EPUB) |
+| `/wiki query <question>` | **Agent** | Search (QMD/grep) + read pages + synthesize answer |
+| `/wiki lint` | **Agent** | Read all pages, check health, report issues |
+| `/wiki search <term>` | Script | Search wiki pages (keyword or `--semantic` for hybrid) |
+| `/wiki status` | Script | Wiki statistics and health overview |
+| `/wiki browse <page>` | Script | Read a specific wiki page |
+| `/wiki related <page>` | Script | Find related pages via typed relationships |
+| `/wiki catalog [--quick]` | Script | Scan sources, build `.catalog.json` |
+| `/wiki reindex [--full]` | Script | Update QMD search index (incremental by default) |
+| `/wiki config [key] [value]` | Script | View or update configuration |
+| `/wiki cron <lint\|ingest> [opts]` | Script | Manage scheduled jobs |
+| `/wiki upgrade` | Script | Pull latest from GitHub and update skill in place |
 
-All commands accept `--backend cc|agent` (default: `agent`).
+**Agent** = OpenClaw agent (your model, cheap). **Claude Code** = only for `/wiki ingest` single files.
+You can also talk naturally — "what do we know about X?" works without any `/wiki` command.
 
 ### Typical Workflow
 
@@ -94,12 +98,11 @@ cp ~/papers/*.pdf <vault>/sources/pdfs/
 ### Batch Options
 
 ```
-/wiki batch                                 # extract + absorb next 10 (default limit)
-/wiki batch --limit 30                      # absorb 30
-/wiki batch --auto                          # absorb everything, loop until done
+/wiki batch                                 # extract + dedup + list next 10 entries for agent
+/wiki batch --limit 30                      # list 30 entries
+/wiki batch --auto                          # list ALL entries for agent to absorb
 /wiki batch --match "immunology"            # only matching entries
 /wiki batch --dry-run                       # preview without absorbing
-/wiki batch --auto --backend cc             # use Claude Code instead of agent
 /wiki config batch.default_limit 20         # change default limit
 ```
 
@@ -115,11 +118,21 @@ cp ~/papers/*.pdf <vault>/sources/pdfs/
 ## Architecture
 
 ```
-Feishu ←→ OpenClaw Research Agent ←→ Wiki Skill
-                                        ├── Python (text extraction)
-                                        ├── Agent (absorb, default)
-                                        ├── Claude Code (absorb, --backend cc)
-                                        └── QMD (semantic search, local)
+Feishu ←→ OpenClaw Research Agent (the wiki engine)
+              │
+              ├── Scripts (mechanical work)
+              │     ├── Python (text extraction from PDF/EPUB/MOBI)
+              │     ├── Dedup (content hash, skip duplicates)
+              │     ├── QMD (semantic search, local)
+              │     └── File management (status, browse, catalog)
+              │
+              ├── Agent (all LLM work)
+              │     ├── Absorb entries → create wiki pages
+              │     ├── Query → search + read + answer
+              │     └── Lint → check health + report
+              │
+              └── Claude Code (single file ingest only, optional)
+                    └── /wiki ingest paper.pdf → deep PDF analysis
 
 Obsidian Vault/
 ├── sources/              ← Raw documents (immutable)
@@ -170,7 +183,6 @@ Config lives alongside the skill (`<skill-dir>/config.json`):
 
 ```
 /wiki config                                  # show all
-/wiki config default_backend cc               # switch to Claude Code
 /wiki config batch.default_limit 20           # change batch size
 /wiki config notifications.progress_interval 5  # progress every 5 files
 ```
@@ -181,7 +193,7 @@ Config lives alongside the skill (`<skill-dir>/config.json`):
 - **Recommended**: `openclaw` (for Feishu integration)
 - **Recommended for PDFs**: `pdftotext` (poppler) — `brew install poppler`
 - **Recommended for EPUBs**: `pip install ebooklib beautifulsoup4 lxml`
-- **Optional**: `claude` CLI + [cc-bridge](https://github.com/zzbyy/openclaw-cc-bridge) (for `--backend cc`)
+- **Optional**: `claude` CLI + [cc-bridge](https://github.com/zzbyy/openclaw-cc-bridge) (for single file deep ingest)
 - **Optional**: [QMD](https://github.com/tobi/qmd) (for semantic search — `npm install -g qmd`)
 
 ## File Locations

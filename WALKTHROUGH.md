@@ -158,12 +158,11 @@ Every `/wiki batch` or `/wiki ingest` runs the same pipeline:
 ### Batch options
 
 ```
-/wiki batch                     # extract + dedup + absorb next 10
-/wiki batch --limit 30          # absorb 30
-/wiki batch --auto              # process everything, loop until done
+/wiki batch                     # extract + dedup + list next 10 entries for agent
+/wiki batch --limit 30          # list 30 entries
+/wiki batch --auto              # list ALL entries for agent to absorb
 /wiki batch --match "CAR-T"     # only matching entries
 /wiki batch --dry-run           # preview without absorbing
-/wiki batch --backend cc        # use Claude Code instead of agent
 /wiki config batch.default_limit 20  # change default batch size
 ```
 
@@ -286,7 +285,6 @@ WHERE contains(related, "[[CAR-T]]")
 
 ```
 /wiki config                                  # show all
-/wiki config default_backend cc               # switch to Claude Code
 /wiki config batch.default_limit 20           # change batch size
 /wiki config notifications.progress_interval 5  # progress every 5 files
 ```
