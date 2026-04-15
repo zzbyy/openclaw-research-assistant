@@ -82,7 +82,6 @@ Instructions:
 
 else
     # Backend: agent — search wiki pages and return context for synthesis
-    PAGES_DIR="$WIKI_PATH/pages"
     INDEX_FILE="$WIKI_PATH/index.md"
     PAGES_JSON="[]"
     SEARCH_METHOD="grep"
@@ -103,7 +102,7 @@ else
     fi
 
     # ── Fallback to grep ───────────────────────────────────────────────────
-    if [ "$SEARCH_METHOD" = "grep" ] && [ -d "$PAGES_DIR" ]; then
+    if [ "$SEARCH_METHOD" = "grep" ]; then
         SEARCH_TERMS=$(echo "$QUESTION" | tr '[:upper:]' '[:lower:]' | \
             tr -cs '[:alnum:]' '\n' | \
             grep -vE '^(the|a|an|is|are|was|were|what|how|why|when|where|who|do|does|did|can|could|would|should|in|on|at|to|for|of|with|and|or|but|not)$' | \
@@ -111,7 +110,8 @@ else
 
         if [ -n "$SEARCH_TERMS" ]; then
             PATTERN=$(echo "$SEARCH_TERMS" | tr '\n' '|' | sed 's/|$//')
-            MATCHES=$(grep -ril "$PATTERN" "$PAGES_DIR" 2>/dev/null | head -10 || true)
+            # Search across all type subdirectories
+            MATCHES=$(find "$WIKI_PATH" -name '*.md' -not -path '*/.*' -not -name 'index.md' -not -name 'log.md' -type f -exec grep -li "$PATTERN" {} \; 2>/dev/null | head -10 || true)
 
             if [ -n "$MATCHES" ]; then
                 while IFS= read -r match; do

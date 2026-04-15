@@ -17,11 +17,13 @@ if [ -z "$PAGE_NAME" ]; then
     exit 1
 fi
 
-PAGES_DIR="$WIKI_PATH/pages"
-PAGE_NAME=$(echo "$PAGE_NAME" | sed 's/\.md$//; s/ /-/g' | tr '[:upper:]' '[:lower:]')
-PAGE_FILE="$PAGES_DIR/${PAGE_NAME}.md"
+PAGE_NAME=$(echo "$PAGE_NAME" | sed 's/\.md$//')
 
-if [ ! -f "$PAGE_FILE" ]; then
+# Search across all type subdirectories
+PAGE_FILE=$(find "$WIKI_PATH" -name "${PAGE_NAME}.md" -not -path '*/.*' -type f 2>/dev/null | head -1)
+[ -z "$PAGE_FILE" ] && PAGE_FILE=$(find "$WIKI_PATH" -iname "${PAGE_NAME}.md" -not -path '*/.*' -type f 2>/dev/null | head -1)
+
+if [ -z "$PAGE_FILE" ]; then
     jq -n --arg name "$PAGE_NAME" '{"error": ("Page not found: " + $name)}'
     exit 1
 fi
@@ -50,11 +52,11 @@ build_relation_json() {
 
     while IFS= read -r link; do
         [ -z "$link" ] && continue
-        LINK_FILE="$PAGES_DIR/${link}.md"
+        LINK_FILE=$(find "$WIKI_PATH" -name "${link}.md" -not -path '*/.*' -type f 2>/dev/null | head -1)
         EXISTS=false
         TITLE="$link"
         TYPE="unknown"
-        if [ -f "$LINK_FILE" ]; then
+        if [ -n "$LINK_FILE" ] && [ -f "$LINK_FILE" ]; then
             EXISTS=true
             TITLE=$(awk '/^---$/{n++; next} n==1 && /^title:/{gsub(/^title: *"?|"? *$/,"",$0); sub(/^title: */,"",$0); print; exit}' "$LINK_FILE" 2>/dev/null || echo "$link")
             TYPE=$(awk '/^---$/{n++; next} n==1 && /^type:/{print $2; exit}' "$LINK_FILE" 2>/dev/null || echo "unknown")
@@ -78,7 +80,7 @@ AUTHORED_BY=$(extract_links "authored_by" "$PAGE_FILE")
 
 # Also find pages that link TO this page (reverse references)
 BACKLINKS="[]"
-for page in "$PAGES_DIR"/*.md; do
+while IFS= read -r page; do
     [ -f "$page" ] || continue
     OTHER_NAME="$(basename "$page" .md)"
     [ "$OTHER_NAME" = "$PAGE_NAME" ] && continue
@@ -87,7 +89,7 @@ for page in "$PAGES_DIR"/*.md; do
         BACKLINKS=$(echo "$BACKLINKS" | jq --arg name "$OTHER_NAME" --arg title "$OTHER_TITLE" \
             '. + [{"page": $name, "title": $title}]')
     fi
-done
+done < <(find "$WIKI_PATH" -name '*.md' -not -path '*/.*' -not -name 'index.md' -not -name 'log.md' -type f 2>/dev/null)
 
 jq -n \
     --arg action "related" \

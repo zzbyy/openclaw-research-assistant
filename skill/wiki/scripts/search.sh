@@ -36,8 +36,6 @@ if [ -z "$QUERY" ]; then
     exit 1
 fi
 
-PAGES_DIR="$WIKI_PATH/pages"
-
 # ── Try QMD first ────────────────────────────────────────────────────────────
 
 if command -v qmd &>/dev/null; then
@@ -75,7 +73,10 @@ fi
 
 SEARCH_METHOD="grep"
 
-if [ ! -d "$PAGES_DIR" ]; then
+# Find all wiki pages across type subdirectories (exclude hidden dirs)
+WIKI_PAGES=$(find "$WIKI_PATH" -name '*.md' -not -path '*/.*' -not -name 'index.md' -not -name 'log.md' -type f 2>/dev/null)
+
+if [ -z "$WIKI_PAGES" ]; then
     jq -n '{"results": [], "total": 0, "search_method": "grep", "message": "No wiki pages yet."}'
     exit 0
 fi
@@ -83,7 +84,7 @@ fi
 RESULTS="[]"
 COUNT=0
 
-for page in "$PAGES_DIR"/*.md; do
+echo "$WIKI_PAGES" | while IFS= read -r page; do
     [ -f "$page" ] || continue
     PAGE_NAME="$(basename "$page" .md)"
     TITLE=$(awk '/^---$/{n++; next} n==1 && /^title:/{gsub(/^title: *"?|"? *$/,"",$0); sub(/^title: */,"",$0); print; exit}' "$page" 2>/dev/null || echo "$PAGE_NAME")

@@ -72,8 +72,7 @@ Instructions:
     exec "$DISPATCH_PATH" "${DISPATCH_ARGS[@]}" -- "$PROMPT"
 
 else
-    # Backend: agent — lightweight local checks
-    PAGES_DIR="$WIKI_PATH/pages"
+    # Lightweight local checks across all type subdirectories
     INDEX_FILE="$WIKI_PATH/index.md"
 
     TOTAL_PAGES=0
@@ -81,41 +80,38 @@ else
     BROKEN_LINKS=()
     STALE_PAGES=()
 
-    if [ -d "$PAGES_DIR" ]; then
-        STALE_DAYS="$([ -f "$WIKI_CONFIG_FILE" ] && jq -r '.confidence.stale_after_days // 90' "$WIKI_CONFIG_FILE" 2>/dev/null || echo 90)"
-        STALE_CUTOFF=$(date -v-"${STALE_DAYS}"d +%Y-%m-%d 2>/dev/null || date -d "${STALE_DAYS} days ago" +%Y-%m-%d 2>/dev/null || echo "")
+    STALE_DAYS="$([ -f "$WIKI_CONFIG_FILE" ] && jq -r '.confidence.stale_after_days // 90' "$WIKI_CONFIG_FILE" 2>/dev/null || echo 90)"
+    STALE_CUTOFF=$(date -v-"${STALE_DAYS}"d +%Y-%m-%d 2>/dev/null || date -d "${STALE_DAYS} days ago" +%Y-%m-%d 2>/dev/null || echo "")
 
-        for page in "$PAGES_DIR"/*.md; do
-            [ -f "$page" ] || continue
-            TOTAL_PAGES=$((TOTAL_PAGES + 1))
-            PAGE_NAME="$(basename "$page" .md)"
+    while IFS= read -r page; do
+        [ -f "$page" ] || continue
+        TOTAL_PAGES=$((TOTAL_PAGES + 1))
+        PAGE_NAME="$(basename "$page" .md)"
 
-            # Check if page is in index
-            if [ -f "$INDEX_FILE" ] && ! grep -q "\[\[$PAGE_NAME\]\]" "$INDEX_FILE" 2>/dev/null; then
-                ORPHAN_PAGES+=("$PAGE_NAME")
+        # Check if page is in index
+        if [ -f "$INDEX_FILE" ] && ! grep -q "\[\[$PAGE_NAME\]\]" "$INDEX_FILE" 2>/dev/null; then
+            ORPHAN_PAGES+=("$PAGE_NAME")
+        fi
+
+        # Check for broken wikilinks
+        LINKS=$(grep -oE '\[\[[^]]+\]\]' "$page" 2>/dev/null | sed 's/\[\[//g;s/\]\]//g' || true)
+        while IFS= read -r link; do
+            [ -z "$link" ] && continue
+            [[ "$link" == ../sources/* ]] && continue
+            LINK_FILE=$(find "$WIKI_PATH" -name "${link}.md" -not -path '*/.*' -type f 2>/dev/null | head -1)
+            if [ -z "$LINK_FILE" ]; then
+                BROKEN_LINKS+=("$PAGE_NAME → $link")
             fi
+        done <<< "$LINKS"
 
-            # Check for broken wikilinks
-            LINKS=$(grep -oE '\[\[[^]]+\]\]' "$page" 2>/dev/null | sed 's/\[\[//g;s/\]\]//g' || true)
-            while IFS= read -r link; do
-                [ -z "$link" ] && continue
-                # Skip source links
-                [[ "$link" == ../sources/* ]] && continue
-                LINK_FILE="$PAGES_DIR/${link}.md"
-                if [ ! -f "$LINK_FILE" ]; then
-                    BROKEN_LINKS+=("$PAGE_NAME → $link")
-                fi
-            done <<< "$LINKS"
-
-            # Check staleness via last_verified in frontmatter
-            if [ -n "$STALE_CUTOFF" ]; then
-                LAST_VERIFIED=$(awk '/^---$/{n++; next} n==1 && /^last_verified:/{print $2; exit}' "$page" 2>/dev/null || echo "")
-                if [ -n "$LAST_VERIFIED" ] && [[ "$LAST_VERIFIED" < "$STALE_CUTOFF" ]]; then
-                    STALE_PAGES+=("$PAGE_NAME (last verified: $LAST_VERIFIED)")
-                fi
+        # Check staleness
+        if [ -n "$STALE_CUTOFF" ]; then
+            LAST_VERIFIED=$(awk '/^---$/{n++; next} n==1 && /^last_updated:/{print $2; exit}' "$page" 2>/dev/null || echo "")
+            if [ -n "$LAST_VERIFIED" ] && [[ "$LAST_VERIFIED" < "$STALE_CUTOFF" ]]; then
+                STALE_PAGES+=("$PAGE_NAME (last updated: $LAST_VERIFIED)")
             fi
-        done
-    fi
+        fi
+    done < <(find "$WIKI_PATH" -name '*.md' -not -path '*/.*' -not -name 'index.md' -not -name 'log.md' -type f 2>/dev/null)
 
     # Build report JSON
     jq -n \
@@ -127,7 +123,7 @@ else
         --arg orphans "$(printf '%s\n' "${ORPHAN_PAGES[@]}")" \
         --arg broken "$(printf '%s\n' "${BROKEN_LINKS[@]}")" \
         --arg stale "$(printf '%s\n' "${STALE_PAGES[@]}")" \
-        --arg note "Lightweight local lint. For full contradiction scan and cross-reference analysis, use --backend cc." \
+        --arg note "Lightweight local lint. For full analysis, ask the agent to run lint directly." \
         '{
             action: $action,
             total_pages: $total_pages,

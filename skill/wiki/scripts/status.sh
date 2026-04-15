@@ -10,7 +10,6 @@ set -e
 # Bootstrap: resolve config if not called via wiki-entry.sh
 source "$(dirname "${BASH_SOURCE[0]}")/_bootstrap.sh"
 
-PAGES_DIR="$WIKI_PATH/pages"
 INDEX_FILE="$WIKI_PATH/index.md"
 LOG_FILE="$WIKI_PATH/log.md"
 
@@ -21,9 +20,9 @@ TYPE_COUNTS="{}"
 CONFIDENCE_COUNTS='{"high": 0, "medium": 0, "low": 0}'
 STATUS_COUNTS='{"draft": 0, "consolidated": 0, "stale": 0}'
 
-if [ -d "$PAGES_DIR" ]; then
-    for page in "$PAGES_DIR"/*.md; do
-        [ -f "$page" ] || continue
+# Find all wiki pages across type subdirectories (exclude hidden dirs)
+while IFS= read -r page; do
+    [ -f "$page" ] || continue
         TOTAL_PAGES=$((TOTAL_PAGES + 1))
 
         TYPE=$(awk '/^---$/{n++; next} n==1 && /^type:/{print $2; exit}' "$page" 2>/dev/null || echo "unknown")
@@ -33,8 +32,7 @@ if [ -d "$PAGES_DIR" ]; then
         TYPE_COUNTS=$(echo "$TYPE_COUNTS" | jq --arg t "$TYPE" '.[$t] = ((.[$t] // 0) + 1)')
         CONFIDENCE_COUNTS=$(echo "$CONFIDENCE_COUNTS" | jq --arg c "$CONF" 'if .[$c] != null then .[$c] += 1 else . end')
         STATUS_COUNTS=$(echo "$STATUS_COUNTS" | jq --arg s "$STAT" 'if .[$s] != null then .[$s] += 1 else . end')
-    done
-fi
+done < <(find "$WIKI_PATH" -name '*.md' -not -path '*/.*' -not -name 'index.md' -not -name 'log.md' -type f 2>/dev/null)
 
 # ── Source counts ────────────────────────────────────────────────────────────
 

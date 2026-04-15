@@ -17,16 +17,20 @@ if [ -z "$PAGE_NAME" ]; then
     exit 1
 fi
 
-PAGES_DIR="$WIKI_PATH/pages"
+# Normalize: remove .md extension if provided
+PAGE_NAME=$(echo "$PAGE_NAME" | sed 's/\.md$//')
 
-# Normalize: remove .md extension if provided, convert spaces to hyphens
-PAGE_NAME=$(echo "$PAGE_NAME" | sed 's/\.md$//; s/ /-/g' | tr '[:upper:]' '[:lower:]')
+# Search across all type subdirectories (not just pages/)
+PAGE_FILE=$(find "$WIKI_PATH" -name "${PAGE_NAME}.md" -not -path '*/.*' -type f 2>/dev/null | head -1)
 
-PAGE_FILE="$PAGES_DIR/${PAGE_NAME}.md"
+# Try case-insensitive if exact match fails
+if [ -z "$PAGE_FILE" ]; then
+    PAGE_FILE=$(find "$WIKI_PATH" -iname "${PAGE_NAME}.md" -not -path '*/.*' -type f 2>/dev/null | head -1)
+fi
 
-if [ ! -f "$PAGE_FILE" ]; then
+if [ -z "$PAGE_FILE" ]; then
     # Try fuzzy match
-    MATCHES=$(find "$PAGES_DIR" -name "*${PAGE_NAME}*" -type f 2>/dev/null | head -5 || true)
+    MATCHES=$(find "$WIKI_PATH" -iname "*${PAGE_NAME}*" -not -path '*/.*' -not -name 'index.md' -not -name 'log.md' -type f 2>/dev/null | head -5 || true)
     if [ -n "$MATCHES" ]; then
         SUGGESTIONS=$(echo "$MATCHES" | while read -r m; do basename "$m" .md; done | jq -R . | jq -s .)
         jq -n --arg name "$PAGE_NAME" --argjson suggestions "$SUGGESTIONS" \
