@@ -54,23 +54,8 @@ fi
 SUBCOMMAND="$1"
 shift
 
-# Extract --backend flag from remaining args
-BACKEND="$DEFAULT_BACKEND"
-REMAINING_ARGS=()
-while [[ $# -gt 0 ]]; do
-    case $1 in
-        --backend|-b)
-            BACKEND="$2"
-            shift 2
-            ;;
-        *)
-            REMAINING_ARGS+=("$1")
-            shift
-            ;;
-    esac
-done
-
-export WIKI_BACKEND="${BACKEND:-cc}"
+# Pass remaining args through to subcommand
+REMAINING_ARGS=("$@")
 
 # ── Dispatch ─────────────────────────────────────────────────────────────────
 

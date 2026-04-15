@@ -27,7 +27,6 @@ _boot_resolve() {
 _VAULT_PATH="$(_boot_resolve "$(jq -r '.vault_path // empty' "$_BOOT_CONFIG" 2>/dev/null)")"
 _WIKI_DIR="$(jq -r '.wiki_dir // "wiki"' "$_BOOT_CONFIG" 2>/dev/null)"
 _SOURCES_DIR="$(jq -r '.sources_dir // "sources"' "$_BOOT_CONFIG" 2>/dev/null)"
-_DEFAULT_BACKEND="$(jq -r '.default_backend // "agent"' "$_BOOT_CONFIG" 2>/dev/null)"
 
 if [ -z "$_VAULT_PATH" ]; then
     echo '{"error": "vault_path not set in config.json"}' >&2
@@ -38,4 +37,3 @@ export WIKI_VAULT_PATH="$_VAULT_PATH"
 export WIKI_PATH="${_VAULT_PATH}/${_WIKI_DIR}"
 export WIKI_SOURCES_PATH="${_VAULT_PATH}/${_SOURCES_DIR}"
 export WIKI_CONFIG_FILE="$_BOOT_CONFIG"
-export WIKI_BACKEND="${WIKI_BACKEND:-$_DEFAULT_BACKEND}"

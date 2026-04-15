@@ -222,6 +222,29 @@ else
     echo "       Wiki skill will still work locally via scripts."
 fi
 
+# python3 — required for text extraction
+if command -v python3 &>/dev/null; then
+    echo "  [OK] python3"
+else
+    echo "  [!!] python3 — not found (required for PDF/EPUB text extraction)"
+fi
+
+# pdftotext — recommended for PDF extraction
+if command -v pdftotext &>/dev/null; then
+    echo "  [OK] pdftotext"
+else
+    echo "  [!!] pdftotext — not found (recommended for PDF text extraction)"
+    if command -v brew &>/dev/null; then
+        INSTALL_POPPLER=$(prompt "  Install poppler (provides pdftotext)? (Y/n)" "Y")
+        if [[ ! "$INSTALL_POPPLER" =~ ^[Nn] ]]; then
+            brew install poppler && echo "  [OK] pdftotext installed" || echo "  [!!] Install failed. Run: brew install poppler"
+        fi
+    else
+        echo "       Install: brew install poppler"
+        echo "       Without it, PDF extraction falls back to PyPDF2 (lower quality)."
+    fi
+fi
+
 echo ""
 
 # ── Prompt 1: Install scope ─────────────────────────────────────────────────
@@ -358,13 +381,9 @@ fi
 
 echo ""
 
-# Default backend: auto-detect
-HAS_CLAUDE=${HAS_CLAUDE:-false}
-if [ "$HAS_CLAUDE" = true ]; then
-    DEFAULT_BACKEND="cc"
-else
-    DEFAULT_BACKEND="agent"
-fi
+# Default backend is always agent (OpenClaw agent handles batch/query/lint).
+# Claude Code is only used for single file ingest via /wiki ingest.
+DEFAULT_BACKEND="agent"
 
 echo "========================================"
 echo "  Installing..."

@@ -1,11 +1,11 @@
 #!/bin/bash
-# batch.sh — Two-phase batch pipeline: extract sources → absorb into wiki
+# batch.sh — Extract sources + dedup + list pending entries for the agent
 #
-# Step 1: Python extracts text from all pending sources → .entries/
-# Step 2: Absorb unprocessed entries into wiki pages (via Claude Code or agent)
+# The script handles mechanical work: extraction, dedup, entry listing.
+# The AGENT handles LLM work: reading entries and creating wiki pages.
 #
-# Usage: batch.sh [--limit N] [--auto] [--match <pattern>] [--dry-run] [--topic <id>]
-# Env: WIKI_BACKEND, WIKI_PATH, WIKI_SOURCES_PATH, WIKI_CONFIG_FILE
+# Usage: batch.sh [--limit N] [--auto] [--match <pattern>] [--dry-run]
+# Env: WIKI_PATH, WIKI_SOURCES_PATH, WIKI_CONFIG_FILE
 
 set -e
 
@@ -23,7 +23,6 @@ LIMIT="$DEFAULT_LIMIT"
 MATCH_PATTERN=""
 DRY_RUN=false
 AUTO=false
-TOPIC=""
 
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -41,11 +40,8 @@ while [[ $# -gt 0 ]]; do
             ;;
         --auto)
             AUTO=true
+            LIMIT=999999
             shift
-            ;;
-        --topic)
-            TOPIC="$2"
-            shift 2
             ;;
         --all)
             LIMIT=999999
@@ -71,18 +67,6 @@ fi
 mkdir -p "$ENTRIES_DIR"
 touch "$ABSORBED_FILE"
 
-# ── Show active backend ──────────────────────────────────────────────────────
-
-if [ "$WIKI_BACKEND" = "cc" ]; then
-    echo "⚠️  Backend: Claude Code (cc) — this uses your Claude API quota!" >&2
-    echo "    To use the cheaper OpenClaw agent instead: /wiki batch --backend agent" >&2
-    echo "    Or set default: /wiki config default_backend agent" >&2
-    wiki_notify "⚠️ [Wiki] Using Claude Code backend — uses API quota. Use --backend agent for cheaper processing."
-else
-    echo "Backend: OpenClaw agent" >&2
-fi
-echo "" >&2
-
 # ── Step 1: Extract — Python processes all pending sources ───────────────────
 
 HAS_PYTHON=false
@@ -96,7 +80,6 @@ if [ "$HAS_PYTHON" = true ]; then
 
     EXTRACT_OUT=$(WIKI_VAULT_PATH="$WIKI_VAULT_PATH" python3 "$INGEST_PY" 2>&1) || true
 
-    # Parse extraction summary
     EXTRACTED=$(echo "$EXTRACT_OUT" | grep -oE 'Success: [0-9]+' | grep -oE '[0-9]+' || echo "0")
     EXTRACT_FAILED=$(echo "$EXTRACT_OUT" | grep -oE 'Failed: +[0-9]+' | grep -oE '[0-9]+' || echo "0")
     EXTRACT_SKIPPED=$(echo "$EXTRACT_OUT" | grep -oE 'Skipped: [0-9]+' | grep -oE '[0-9]+' || echo "0")
@@ -109,7 +92,7 @@ else
     EXTRACT_FAILED=0
 fi
 
-# ── Step 1.5: Dedup entries ───────────────────────────────────────────────────
+# ── Step 1.5: Dedup entries ──────────────────────────────────────────────────
 
 CONTENT_HASHES="$ENTRIES_DIR/.content-hashes"
 DEDUPED_FILE="$ENTRIES_DIR/.deduped"
@@ -124,25 +107,18 @@ for entry in "$ENTRIES_DIR"/*.md; do
     [ -f "$entry" ] || continue
     ENTRY_NAME="$(basename "$entry")"
 
-    # Skip if already in content-hashes or deduped
     grep -qF "$ENTRY_NAME" "$CONTENT_HASHES" 2>/dev/null && continue
     grep -qxF "$ENTRY_NAME" "$DEDUPED_FILE" 2>/dev/null && continue
 
-    # Hash the body (skip YAML frontmatter between --- markers)
     BODY_HASH=$(awk '/^---$/{n++; next} n>=2{print}' "$entry" | md5 -q 2>/dev/null || \
                 awk '/^---$/{n++; next} n>=2{print}' "$entry" | md5sum 2>/dev/null | cut -d' ' -f1 || echo "")
 
-    if [ -z "$BODY_HASH" ]; then
-        continue
-    fi
+    [ -z "$BODY_HASH" ] && continue
 
-    # Check if this hash already exists
     if grep -q "^${BODY_HASH}" "$CONTENT_HASHES" 2>/dev/null; then
-        # Duplicate — mark it
         echo "$ENTRY_NAME" >> "$DEDUPED_FILE"
         DEDUP_DUPES=$((DEDUP_DUPES + 1))
     else
-        # New unique entry — record it
         printf '%s\t%s\n' "$BODY_HASH" "$ENTRY_NAME" >> "$CONTENT_HASHES"
         DEDUP_NEW=$((DEDUP_NEW + 1))
     fi
@@ -155,57 +131,57 @@ elif [ "$DEDUP_NEW" -gt 0 ]; then
     echo "  Dedup: $DEDUP_NEW new unique entries, no duplicates" >&2
 fi
 
-# ── Step 2: Find unabsorbed entries ──────────────────────────────────────────
+# ── Step 2: Find pending entries ─────────────────────────────────────────────
 
-find_pending_entries() {
-    local pending=()
+ENTRIES_JSON="[]"
+COUNT=0
 
-    # 1. Extracted entries in .entries/ (from PDF/EPUB/MOBI extraction)
-    for entry in "$ENTRIES_DIR"/*.md; do
-        [ -f "$entry" ] || continue
-        ENTRY_NAME="$(basename "$entry")"
+# Extracted entries in .entries/
+for entry in "$ENTRIES_DIR"/*.md; do
+    [ -f "$entry" ] || continue
+    ENTRY_NAME="$(basename "$entry")"
 
-        # Skip if already absorbed or deduped
-        grep -qxF "$ENTRY_NAME" "$ABSORBED_FILE" 2>/dev/null && continue
-        grep -qxF "$ENTRY_NAME" "$DEDUPED_FILE" 2>/dev/null && continue
+    grep -qxF "$ENTRY_NAME" "$ABSORBED_FILE" 2>/dev/null && continue
+    grep -qxF "$ENTRY_NAME" "$DEDUPED_FILE" 2>/dev/null && continue
 
-        # Apply match pattern
-        if [ -n "$MATCH_PATTERN" ]; then
-            echo "$ENTRY_NAME" | grep -qi "$MATCH_PATTERN" 2>/dev/null || continue
-        fi
+    if [ -n "$MATCH_PATTERN" ]; then
+        echo "$ENTRY_NAME" | grep -qi "$MATCH_PATTERN" 2>/dev/null || continue
+    fi
 
-        pending+=("$entry")
-    done
+    [ "$COUNT" -ge "$LIMIT" ] && break
+    ENTRIES_JSON=$(echo "$ENTRIES_JSON" | jq --arg e ".entries/$ENTRY_NAME" '. + [$e]')
+    COUNT=$((COUNT + 1))
+done
 
-    # 2. Markdown/HTML/text source files (readable directly, no extraction needed)
+# Markdown/HTML source files (readable directly)
+if [ "$COUNT" -lt "$LIMIT" ]; then
     for subdir in markdown html; do
-        local srcdir="$WIKI_SOURCES_PATH/$subdir"
+        srcdir="$WIKI_SOURCES_PATH/$subdir"
         [ -d "$srcdir" ] || continue
         for srcfile in "$srcdir"/*.md "$srcdir"/*.txt "$srcdir"/*.html "$srcdir"/*.htm; do
             [ -f "$srcfile" ] || continue
-            local srcname="source_$(basename "$srcfile")"
+            srcname="source_$(basename "$srcfile")"
 
-            # Skip if already absorbed
             grep -qxF "$srcname" "$ABSORBED_FILE" 2>/dev/null && continue
 
-            # Apply match pattern
             if [ -n "$MATCH_PATTERN" ]; then
                 echo "$srcname" | grep -qi "$MATCH_PATTERN" 2>/dev/null || continue
             fi
 
-            pending+=("$srcfile")
+            [ "$COUNT" -ge "$LIMIT" ] && break
+            REL_PATH="../sources/$subdir/$(basename "$srcfile")"
+            ENTRIES_JSON=$(echo "$ENTRIES_JSON" | jq --arg e "$REL_PATH" '. + [$e]')
+            COUNT=$((COUNT + 1))
         done
     done
+fi
 
-    echo "${pending[@]}"
-}
+TOTAL_ABSORBED=$(wc -l < "$ABSORBED_FILE" | tr -d ' ')
 
-PENDING_STR=$(find_pending_entries)
-read -ra PENDING <<< "$PENDING_STR"
-TOTAL_PENDING=${#PENDING[@]}
+# ── Output ───────────────────────────────────────────────────────────────────
 
-if [ "$TOTAL_PENDING" -eq 0 ]; then
-    echo "Step 2: No pending entries to absorb." >&2
+if [ "$COUNT" -eq 0 ]; then
+    echo "No pending entries to absorb." >&2
     jq -n --argjson extracted "${EXTRACTED:-0}" '{
         action: "batch",
         status: "nothing_to_absorb",
@@ -215,227 +191,41 @@ if [ "$TOTAL_PENDING" -eq 0 ]; then
     exit 0
 fi
 
-echo "Step 2: $TOTAL_PENDING entries pending absorption." >&2
-
-# ── Dry run ──────────────────────────────────────────────────────────────────
-
 if [ "$DRY_RUN" = true ]; then
-    BATCH_SIZE="$LIMIT"
-    [ "$BATCH_SIZE" -gt "$TOTAL_PENDING" ] && BATCH_SIZE="$TOTAL_PENDING"
-
-    FILENAMES="[]"
-    for ((i=0; i<BATCH_SIZE; i++)); do
-        FILENAMES=$(echo "$FILENAMES" | jq --arg f "$(basename "${PENDING[$i]}")" '. + [$f]')
-    done
-
     jq -n \
         --argjson extracted "${EXTRACTED:-0}" \
-        --argjson total_pending "$TOTAL_PENDING" \
-        --argjson batch_size "$BATCH_SIZE" \
-        --argjson files "$FILENAMES" \
+        --argjson pending "$COUNT" \
+        --argjson entries "$ENTRIES_JSON" \
         '{
             action: "batch_dry_run",
             extracted: $extracted,
-            total_pending: $total_pending,
-            batch_size: $batch_size,
-            files: $files,
-            message: ("Dry run: " + ($extracted | tostring) + " extracted, would absorb " + ($batch_size | tostring) + " of " + ($total_pending | tostring) + " pending entries.")
+            pending: $pending,
+            entries: $entries,
+            message: ("Dry run: would absorb " + ($pending | tostring) + " entries.")
         }'
     exit 0
 fi
 
-# ── Step 3: Absorb entries ───────────────────────────────────────────────────
+echo "Step 2: $COUNT entries ready for absorption." >&2
+wiki_notify "[Wiki] $COUNT entries ready for agent to absorb"
 
-_wiki_config() {
-    [ -f "$WIKI_CONFIG_FILE" ] && jq -r "$1 // empty" "$WIKI_CONFIG_FILE" 2>/dev/null || echo ""
-}
-
-DISPATCH_PATH=""
-if [ "$WIKI_BACKEND" = "cc" ]; then
-    DISPATCH_PATH="$(_wiki_config '.cc_bridge.dispatch_path')"
-    [[ "$DISPATCH_PATH" == '~/'* ]] && DISPATCH_PATH="$HOME/${DISPATCH_PATH:2}"
-fi
-
-CC_MODEL="$(_wiki_config '.cc_bridge.model')"
-CC_TIMEOUT="$(_wiki_config '.cc_bridge.timeout_minutes')"
-
-absorb_batch() {
-    local batch_start="$1"
-    local batch_size="$2"
-    local batch_num="$3"
-    local dispatched=0
-    local failed=0
-
-    wiki_notify "[Wiki] Absorbing batch $batch_num ($batch_size entries)..."
-
-    for ((i=batch_start; i<batch_start+batch_size && i<TOTAL_PENDING; i++)); do
-        entry="${PENDING[$i]}"
-        ENTRY_NAME="$(basename "$entry")"
-        ENTRY_IDX=$((i - batch_start + 1))
-
-        # Determine entry path relative to wiki dir
-        # Extracted entries are in .entries/, direct sources are in ../sources/
-        if [[ "$entry" == "$ENTRIES_DIR"/* ]]; then
-            ENTRY_REF=".entries/${ENTRY_NAME}"
-            ABSORB_NAME="$ENTRY_NAME"
-        else
-            ENTRY_REF="../sources/$(basename "$(dirname "$entry")")/${ENTRY_NAME}"
-            ABSORB_NAME="source_${ENTRY_NAME}"
-        fi
-
-        echo "  [$ENTRY_IDX/$batch_size] Absorbing: $ENTRY_NAME" >&2
-
-        if [ "$WIKI_BACKEND" = "cc" ] && [ -n "$DISPATCH_PATH" ] && [ -f "$DISPATCH_PATH" ]; then
-            # CC backend: dispatch to Claude Code
-            PROMPT="Absorb this entry into the wiki. Follow the wiki schema in .schema.md.
-If Obsidian skills are available, use them for creating and editing markdown files.
-
-Entry file: ${ENTRY_REF}
-
-Instructions:
-1. Read the entry from ${ENTRY_REF}
-2. Scan index.md to understand current wiki state
-3. Identify key concepts, methods, people, techniques
-4. Create pages in appropriate type subdirectories (create dirs as needed)
-5. Create a book/paper summary page for the source itself
-6. Cross-reference with existing pages
-7. Check for contradictions — add > [!warning] callouts if found
-8. Update index.md with new entries
-9. Append to log.md"
-
-            DISPATCH_ARGS=(--dir "$WIKI_PATH")
-            [ -n "$CC_MODEL" ] && DISPATCH_ARGS+=(--model "$CC_MODEL")
-            [ -n "$CC_TIMEOUT" ] && DISPATCH_ARGS+=(--timeout "$CC_TIMEOUT")
-            [ -n "$TOPIC" ] && DISPATCH_ARGS+=(--topic "$TOPIC")
-
-            DISPATCH_OUT=$("$DISPATCH_PATH" "${DISPATCH_ARGS[@]}" -- "$PROMPT" 2>&1) && {
-                echo "$ABSORB_NAME" >> "$ABSORBED_FILE"
-                dispatched=$((dispatched + 1))
-                TASK_ID=$(echo "$DISPATCH_OUT" | jq -r '.task_id // empty' 2>/dev/null || true)
-                [ -n "$TASK_ID" ] && echo "    -> dispatched (task: $TASK_ID)" >&2 || echo "    -> dispatched" >&2
-            } || {
-                echo "    [!!] Failed" >&2
-                failed=$((failed + 1))
-            }
-        else
-            # Agent backend: mark as queued, agent processes from the output JSON
-            echo "$ABSORB_NAME" >> "$ABSORBED_FILE"
-            dispatched=$((dispatched + 1))
-            echo "    -> queued for agent" >&2
-        fi
-
-        # Progress notification
-        if should_notify_progress "$ENTRY_IDX"; then
-            wiki_notify "[Wiki] Batch $batch_num: $ENTRY_IDX/$batch_size absorbed..."
-        fi
-    done
-
-    echo "$dispatched $failed"
-}
-
-# ── Run absorption (single batch or auto-loop) ──────────────────────────────
-
-TOTAL_DISPATCHED=0
-TOTAL_FAILED=0
-BATCH_NUM=0
-
-if [ "$AUTO" = true ]; then
-    echo "Auto mode: processing all $TOTAL_PENDING pending entries in batches of $LIMIT..." >&2
-    wiki_notify "[Wiki] Auto batch: $TOTAL_PENDING entries to process (batches of $LIMIT)"
-
-    OFFSET=0
-    while [ "$OFFSET" -lt "$TOTAL_PENDING" ]; do
-        BATCH_NUM=$((BATCH_NUM + 1))
-        CURRENT_BATCH="$LIMIT"
-        REMAINING=$((TOTAL_PENDING - OFFSET))
-        [ "$CURRENT_BATCH" -gt "$REMAINING" ] && CURRENT_BATCH="$REMAINING"
-
-        RESULT=$(absorb_batch "$OFFSET" "$CURRENT_BATCH" "$BATCH_NUM")
-        D=$(echo "$RESULT" | awk '{print $1}')
-        F=$(echo "$RESULT" | awk '{print $2}')
-        TOTAL_DISPATCHED=$((TOTAL_DISPATCHED + D))
-        TOTAL_FAILED=$((TOTAL_FAILED + F))
-
-        OFFSET=$((OFFSET + CURRENT_BATCH))
-
-        # Reindex after each batch
-        if command -v qmd &>/dev/null && [ "$D" -gt 0 ]; then
-            echo "  Reindexing..." >&2
-            "$SCRIPT_DIR/reindex.sh" >/dev/null 2>&1 || true
-        fi
-    done
-else
-    BATCH_NUM=1
-    BATCH_SIZE="$LIMIT"
-    [ "$BATCH_SIZE" -gt "$TOTAL_PENDING" ] && BATCH_SIZE="$TOTAL_PENDING"
-
-    RESULT=$(absorb_batch 0 "$BATCH_SIZE" 1)
-    TOTAL_DISPATCHED=$(echo "$RESULT" | awk '{print $1}')
-    TOTAL_FAILED=$(echo "$RESULT" | awk '{print $2}')
-
-    # Reindex
-    if command -v qmd &>/dev/null && [ "$TOTAL_DISPATCHED" -gt 0 ]; then
-        echo "Reindexing search index..." >&2
-        REINDEX_OUT=$("$SCRIPT_DIR/reindex.sh" 2>&1) || true
-        REINDEX_MSG=$(echo "$REINDEX_OUT" | jq -r '.message // empty' 2>/dev/null || true)
-        [ -n "$REINDEX_MSG" ] && echo "  $REINDEX_MSG" >&2
-    fi
-fi
-
-REMAINING=$((TOTAL_PENDING - TOTAL_DISPATCHED - TOTAL_FAILED))
-
-# ── Completion ───────────────────────────────────────────────────────────────
-
-SUMMARY="[Wiki] Complete: $TOTAL_DISPATCHED absorbed, $TOTAL_FAILED failed, $REMAINING remaining."
-wiki_notify "$SUMMARY"
-
-# Agent backend: return all pending entries for the agent to process
-if [ "$WIKI_BACKEND" != "cc" ] && [ "$TOTAL_DISPATCHED" -gt 0 ]; then
-    # Collect entry paths for agent
-    ENTRIES_JSON="[]"
-    while IFS= read -r absorbed_entry; do
-        ENTRY_PATH="$ENTRIES_DIR/$absorbed_entry"
-        [ -f "$ENTRY_PATH" ] || continue
-        ENTRIES_JSON=$(echo "$ENTRIES_JSON" | jq --arg e ".entries/$absorbed_entry" '. + [$e]')
-    done < <(tail -"$TOTAL_DISPATCHED" "$ABSORBED_FILE")
-
-    jq -n \
-        --arg action "batch" \
-        --argjson extracted "${EXTRACTED:-0}" \
-        --argjson total_pending "$TOTAL_PENDING" \
-        --argjson dispatched "$TOTAL_DISPATCHED" \
-        --argjson failed "$TOTAL_FAILED" \
-        --argjson remaining "$REMAINING" \
-        --argjson entries "$ENTRIES_JSON" \
-        --arg wiki_path "$WIKI_PATH" \
-        '{
-            action: $action,
-            extracted: $extracted,
-            total_pending: $total_pending,
-            dispatched: $dispatched,
-            failed: $failed,
-            remaining: $remaining,
-            wiki_path: $wiki_path,
-            entries: $entries,
-            instructions: "Read each entry file listed above. For each entry, create wiki pages in appropriate type subdirectories following .schema.md. Update index.md and log.md after processing all entries."
-        }'
-else
-    jq -n \
-        --arg action "batch" \
-        --argjson extracted "${EXTRACTED:-0}" \
-        --argjson total_pending "$TOTAL_PENDING" \
-        --argjson dispatched "$TOTAL_DISPATCHED" \
-        --argjson failed "$TOTAL_FAILED" \
-        --argjson remaining "$REMAINING" \
-        --argjson batches "$BATCH_NUM" \
-        '{
-            action: $action,
-            extracted: $extracted,
-            total_pending: $total_pending,
-            dispatched: $dispatched,
-            failed: $failed,
-            remaining: $remaining,
-            batches: $batches,
-            message: ("Batch complete. " + ($dispatched | tostring) + " absorbed, " + ($failed | tostring) + " failed, " + ($remaining | tostring) + " remaining.")
-        }'
-fi
+jq -n \
+    --arg action "batch" \
+    --argjson extracted "${EXTRACTED:-0}" \
+    --argjson dedup_skipped "$DEDUP_DUPES" \
+    --argjson pending "$COUNT" \
+    --argjson total_absorbed "$TOTAL_ABSORBED" \
+    --argjson entries "$ENTRIES_JSON" \
+    --arg wiki_path "$WIKI_PATH" \
+    --arg absorbed_file "$ABSORBED_FILE" \
+    '{
+        action: $action,
+        extracted: $extracted,
+        dedup_skipped: $dedup_skipped,
+        pending: $pending,
+        total_absorbed: $total_absorbed,
+        wiki_path: $wiki_path,
+        absorbed_file: $absorbed_file,
+        entries: $entries,
+        instructions: "Read each entry file listed in entries[]. For each entry, create wiki pages in appropriate type subdirectories following .schema.md. After processing each entry, append its filename to the absorbed_file. Update index.md and log.md. Run wiki-entry.sh reindex after finishing."
+    }'
