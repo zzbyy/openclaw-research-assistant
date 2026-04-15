@@ -77,14 +77,27 @@ The script handles extraction + dedup and returns a JSON list of pending entries
    ---
    title: "Page Title"
    type: concept
+   confidence: high              # high | medium | low
+   source_count: 1
+   sources: ["<file_id from entry frontmatter>"]
    created: 2026-04-15
    last_updated: 2026-04-15
-   sources: ["<file_id from entry frontmatter>"]
+   status: draft                 # draft | consolidated | stale
+   tags: [topic/subtopic]
+   depends_on: ["[[prereq]]"]   # if applicable
+   used_by: []
+   supersedes: []
    related: ["[[other-page]]"]
+   authored_by: []               # for papers/books
    ---
    ```
-5. Cross-reference: link to existing related pages via `[[wikilinks]]`
-6. If contradictions found: add `> [!warning] Contradiction` callout, don't auto-resolve
+   Not all fields required — use what's relevant. See `.schema.md` for full rules.
+5. Cross-reference: link to existing related pages, use typed relationships
+   (`depends_on`, `used_by`, `supersedes`) when the relationship is clear
+6. Check for contradictions against existing pages. If found:
+   - Add `> [!warning] Contradiction` callout with both sources cited
+   - Lower confidence if warranted
+   - Don't auto-resolve — surface for the user
 7. Update `index.md` — add new pages under the right categories
 8. Append to `log.md` — record what was absorbed
 9. After processing, mark each entry by appending its filename to the `absorbed_file` path from the batch output
