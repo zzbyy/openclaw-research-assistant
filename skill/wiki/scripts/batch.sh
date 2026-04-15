@@ -176,7 +176,20 @@ done
 
 REMAINING=$((TOTAL_PENDING - BATCH_SIZE))
 
+# ── Auto-reindex (incremental) ──────────────────────────────────────────────
+
+REINDEXED=false
+if command -v qmd &>/dev/null && [ "$DISPATCHED" -gt 0 ]; then
+    echo "Reindexing search..." >&2
+    "$SCRIPT_DIR/reindex.sh" >/dev/null 2>&1 && REINDEXED=true || true
+fi
+
 # ── Output ───────────────────────────────────────────────────────────────────
+
+REINDEX_NOTE=""
+if [ "$WIKI_BACKEND" = "cc" ] && [ "$DISPATCHED" -gt 0 ]; then
+    REINDEX_NOTE="Pages are created in the background by Claude Code. Run /wiki reindex again after tasks complete."
+fi
 
 jq -n \
     --arg action "batch" \
@@ -185,6 +198,8 @@ jq -n \
     --argjson dispatched "$DISPATCHED" \
     --argjson failed "$FAILED" \
     --argjson remaining "$REMAINING" \
+    --argjson reindexed "$REINDEXED" \
+    --arg reindex_note "$REINDEX_NOTE" \
     '{
         action: $action,
         total_pending: $total_pending,
@@ -192,5 +207,7 @@ jq -n \
         dispatched: $dispatched,
         failed: $failed,
         remaining: $remaining,
-        message: ("Batch complete. " + ($dispatched | tostring) + " dispatched, " + ($failed | tostring) + " failed, " + ($remaining | tostring) + " remaining.")
+        reindexed: $reindexed,
+        message: ("Batch complete. " + ($dispatched | tostring) + " dispatched, " + ($failed | tostring) + " failed, " + ($remaining | tostring) + " remaining."),
+        note: (if $reindex_note != "" then $reindex_note else null end)
     }'

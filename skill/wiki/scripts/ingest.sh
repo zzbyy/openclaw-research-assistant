@@ -124,8 +124,13 @@ Instructions:
         DISPATCH_ARGS+=(--topic "$TOPIC")
     fi
 
-    # Dispatch
-    exec "$DISPATCH_PATH" "${DISPATCH_ARGS[@]}" -- "$PROMPT"
+    # Dispatch (cc backend — pages created async, reindex later)
+    "$DISPATCH_PATH" "${DISPATCH_ARGS[@]}" -- "$PROMPT"
+
+    # Reindex picks up pages from previous ingests
+    if command -v qmd &>/dev/null; then
+        "$SCRIPT_DIR/reindex.sh" >/dev/null 2>&1 || true
+    fi
 
 else
     # Backend: agent — return structured info for the research agent to process
@@ -143,6 +148,11 @@ else
             filename: $filename,
             format: $format,
             wiki_path: $wiki_path,
-            instructions: "Read the source document, create/update wiki pages following .schema.md, check for contradictions, update index.md and log.md."
+            instructions: "Read the source document, create/update wiki pages following .schema.md, check for contradictions, update index.md and log.md. After creating pages, run /wiki reindex to update the search index."
         }'
+
+    # Auto-reindex after agent creates pages
+    if command -v qmd &>/dev/null; then
+        "$SCRIPT_DIR/reindex.sh" >/dev/null 2>&1 || true
+    fi
 fi
