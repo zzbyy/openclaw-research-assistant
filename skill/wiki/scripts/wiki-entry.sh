@@ -114,8 +114,11 @@ case "$SUBCOMMAND" in
     upgrade)
         exec "$SCRIPT_DIR/upgrade.sh" "${REMAINING_ARGS[@]}"
         ;;
+    reindex)
+        exec "$SCRIPT_DIR/reindex.sh" "${REMAINING_ARGS[@]}"
+        ;;
     *)
-        jq -n --arg cmd "$SUBCOMMAND" '{"error": ("Unknown subcommand: " + $cmd + ". Use: ingest, query, lint, search, status, browse, related, config, cron, catalog, init, batch, upgrade")}'
+        jq -n --arg cmd "$SUBCOMMAND" '{"error": ("Unknown subcommand: " + $cmd + ". Use: ingest, query, lint, search, status, browse, related, config, cron, catalog, init, batch, upgrade, reindex")}'
         exit 1
         ;;
 esac

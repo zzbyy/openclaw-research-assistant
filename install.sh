@@ -496,6 +496,39 @@ else
     fi
 fi
 
+# ── Check / install QMD (semantic search) ────────────────────────────────────
+
+echo ""
+if command -v qmd &>/dev/null; then
+    echo "[OK] QMD detected — semantic search enabled"
+    # Register wiki pages collection if not already
+    if ! qmd collections list 2>/dev/null | grep -q "wiki"; then
+        echo "  Registering wiki pages with QMD..."
+        qmd add "$PAGES_DIR" --name wiki 2>/dev/null || qmd add "$PAGES_DIR" 2>/dev/null || true
+        echo "  [OK] wiki collection registered"
+    fi
+else
+    echo "[!!] QMD not installed (optional — enables semantic search)"
+    INSTALL_QMD=$(prompt "  Install QMD now? (Y/n)" "Y")
+    if [[ ! "$INSTALL_QMD" =~ ^[Nn] ]]; then
+        echo "  Installing QMD..."
+        if command -v npm &>/dev/null; then
+            npm install -g qmd 2>&1 | tail -3 && {
+                echo "  [OK] QMD installed"
+                echo "  Registering wiki pages..."
+                qmd add "$PAGES_DIR" --name wiki 2>/dev/null || qmd add "$PAGES_DIR" 2>/dev/null || true
+                echo "  [OK] wiki collection registered"
+                echo "  Run '/wiki reindex' after ingesting pages to build the search index."
+            } || echo "  [!!] QMD install failed. Install manually: npm install -g qmd"
+        else
+            echo "  No npm found. Install manually: npm install -g qmd"
+        fi
+    else
+        echo "  Skipping — search will use grep fallback."
+        echo "  Install later: npm install -g qmd"
+    fi
+fi
+
 # ── Summary ──────────────────────────────────────────────────────────────────
 
 echo ""
@@ -516,3 +549,4 @@ echo "Quick start:"
 echo "  1. /wiki status                              — verify installation"
 echo "  2. /wiki ingest ~/papers/your-paper.pdf      — ingest your first paper"
 echo "  3. /wiki query \"what is ...?\"                 — ask the wiki a question"
+echo "  4. /wiki reindex                             — build search index (after ingesting)"

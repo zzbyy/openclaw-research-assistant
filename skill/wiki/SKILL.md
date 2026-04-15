@@ -30,6 +30,7 @@ Personal knowledge wiki following Karpathy's LLM Wiki method with v2 extensions
 | `/wiki catalog [--format <type>]` | `scripts/wiki-entry.sh catalog` | Scan sources and build a lightweight catalog |
 | `/wiki init [--auto <count>]` | `scripts/wiki-entry.sh init` | Guided first-time wiki initialization |
 | `/wiki batch [--limit N] [opts]` | `scripts/wiki-entry.sh batch` | Batch ingest pending sources |
+| `/wiki reindex [--full]` | `scripts/wiki-entry.sh reindex` | Update QMD search index after wiki changes |
 
 ## Global Flags
 

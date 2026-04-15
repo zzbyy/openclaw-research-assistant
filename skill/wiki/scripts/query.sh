@@ -1,5 +1,6 @@
 #!/bin/bash
 # query.sh — Query the wiki with a question
+# Uses QMD hybrid search when available, falls back to grep.
 # Dispatches to Claude Code or returns context for agent-side synthesis.
 #
 # Usage: query.sh <question...>
@@ -60,6 +61,7 @@ if [ "$WIKI_BACKEND" = "cc" ]; then
 
     PROMPT="Query the wiki to answer this question. Follow the wiki schema in .schema.md.
 If Obsidian skills are available, use them for reading and editing markdown files.
+If QMD is available as an MCP tool, use qmd query for semantic search.
 
 Question: ${QUESTION}
 
@@ -82,35 +84,44 @@ else
     # Backend: agent — search wiki pages and return context for synthesis
     PAGES_DIR="$WIKI_PATH/pages"
     INDEX_FILE="$WIKI_PATH/index.md"
-    MATCHES=""
+    PAGES_JSON="[]"
+    SEARCH_METHOD="grep"
 
-    if [ -d "$PAGES_DIR" ]; then
-        # Search for pages containing question keywords
-        # Extract key words (skip common words)
+    # ── Try QMD first (hybrid semantic search) ─────────────────────────────
+    if command -v qmd &>/dev/null; then
+        SEARCH_METHOD="qmd"
+        QMD_RESULTS=$(qmd query "$QUESTION" -n 10 --format json 2>/dev/null || echo "")
+
+        if [ -n "$QMD_RESULTS" ] && echo "$QMD_RESULTS" | jq -e '.' >/dev/null 2>&1; then
+            PAGES_JSON=$(echo "$QMD_RESULTS" | jq '[.[] | {
+                name: (.path | split("/") | last | rtrimstr(".md")),
+                path: .path,
+                snippet: (.content // .chunk // "")[0:300],
+                score: (.score // 0)
+            }]' 2>/dev/null || echo "[]")
+        fi
+    fi
+
+    # ── Fallback to grep ───────────────────────────────────────────────────
+    if [ "$SEARCH_METHOD" = "grep" ] && [ -d "$PAGES_DIR" ]; then
         SEARCH_TERMS=$(echo "$QUESTION" | tr '[:upper:]' '[:lower:]' | \
             tr -cs '[:alnum:]' '\n' | \
             grep -vE '^(the|a|an|is|are|was|were|what|how|why|when|where|who|do|does|did|can|could|would|should|in|on|at|to|for|of|with|and|or|but|not)$' | \
             head -10)
 
         if [ -n "$SEARCH_TERMS" ]; then
-            # Build grep pattern
             PATTERN=$(echo "$SEARCH_TERMS" | tr '\n' '|' | sed 's/|$//')
             MATCHES=$(grep -ril "$PATTERN" "$PAGES_DIR" 2>/dev/null | head -10 || true)
-        fi
-    fi
 
-    # Build result with matched page paths and snippets
-    if [ -n "$MATCHES" ]; then
-        PAGES_JSON="[]"
-        while IFS= read -r match; do
-            PAGE_NAME="$(basename "$match" .md)"
-            # Get first 3 lines after frontmatter
-            SNIPPET=$(awk '/^---$/{n++; next} n>=2{print; if(++c>=3) exit}' "$match" 2>/dev/null || echo "")
-            PAGES_JSON=$(echo "$PAGES_JSON" | jq --arg name "$PAGE_NAME" --arg path "$match" --arg snippet "$SNIPPET" \
-                '. + [{"name": $name, "path": $path, "snippet": $snippet}]')
-        done <<< "$MATCHES"
-    else
-        PAGES_JSON="[]"
+            if [ -n "$MATCHES" ]; then
+                while IFS= read -r match; do
+                    PAGE_NAME="$(basename "$match" .md)"
+                    SNIPPET=$(awk '/^---$/{n++; next} n>=2{print; if(++c>=3) exit}' "$match" 2>/dev/null || echo "")
+                    PAGES_JSON=$(echo "$PAGES_JSON" | jq --arg name "$PAGE_NAME" --arg path "$match" --arg snippet "$SNIPPET" \
+                        '. + [{"name": $name, "path": $path, "snippet": $snippet}]')
+                done <<< "$MATCHES"
+            fi
+        fi
     fi
 
     jq -n \
@@ -118,12 +129,14 @@ else
         --arg question "$QUESTION" \
         --arg wiki_path "$WIKI_PATH" \
         --arg index_file "$INDEX_FILE" \
+        --arg search_method "$SEARCH_METHOD" \
         --argjson matched_pages "$PAGES_JSON" \
         '{
             action: $action,
             question: $question,
             wiki_path: $wiki_path,
             index_file: $index_file,
+            search_method: $search_method,
             matched_pages: $matched_pages,
             instructions: "Read the matched pages (and any others linked from them), synthesize an answer with [[wikilinks]] and confidence levels. If no pages match, note the gap."
         }'
