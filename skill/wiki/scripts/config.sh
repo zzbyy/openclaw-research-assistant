@@ -8,6 +8,9 @@
 
 set -e
 
+# Bootstrap: resolve config if not called via wiki-entry.sh
+source "$(dirname "${BASH_SOURCE[0]}")/_bootstrap.sh"
+
 CONFIG_FILE="$WIKI_CONFIG_FILE"
 
 if [ ! -f "$CONFIG_FILE" ]; then

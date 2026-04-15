@@ -7,6 +7,9 @@
 
 set -e
 
+# Bootstrap: resolve config if not called via wiki-entry.sh
+source "$(dirname "${BASH_SOURCE[0]}")/_bootstrap.sh"
+
 PAGES_DIR="$WIKI_PATH/pages"
 INDEX_FILE="$WIKI_PATH/index.md"
 LOG_FILE="$WIKI_PATH/log.md"

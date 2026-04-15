@@ -10,6 +10,11 @@ You serve as the conversational interface to the wiki. You handle two modes:
 1. **Command mode** — user sends `/wiki <command>`, routed through `scripts/wiki-entry.sh`
 2. **Conversational mode** — user asks questions or describes tasks naturally, you interpret and act
 
+**IMPORTANT**: Always run commands through `scripts/wiki-entry.sh <subcommand> [args]`.
+Do NOT call individual scripts (e.g., `catalog.sh`, `init.sh`) directly — `wiki-entry.sh`
+sets up the environment. If you must call a script directly, it will self-bootstrap from
+`config.json`, but `wiki-entry.sh` is the canonical entry point.
+
 ## Wiki Location
 
 The wiki is at the path configured in `config.json` (located alongside this file in the skill directory):

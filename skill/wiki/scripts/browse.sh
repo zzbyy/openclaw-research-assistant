@@ -7,6 +7,9 @@
 
 set -e
 
+# Bootstrap: resolve config if not called via wiki-entry.sh
+source "$(dirname "${BASH_SOURCE[0]}")/_bootstrap.sh"
+
 PAGE_NAME="$*"
 
 if [ -z "$PAGE_NAME" ]; then
